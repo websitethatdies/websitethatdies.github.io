@@ -399,6 +399,66 @@
 (function(){
 "use strict";
 
+/* ============================================================
+   CONFIG. Leave blank to run on a simulated demo heart.
+   To make it real (free):
+   1. Create a Supabase project (free tier).
+   2. Run this SQL in the SQL editor:
+
+      create table pulse (
+        id int primary key,
+        born timestamptz not null,
+        last_visit timestamptz not null,
+        dead boolean default false,
+        died_at timestamptz,
+        saves bigint default 0,
+        closest_ms bigint
+      );
+      insert into pulse values (1, now(), now(), false, null, 0, null);
+      create table visits (
+        id bigserial primary key,
+        created_at timestamptz default now(),
+        remaining_ms bigint
+      );
+      create table words (
+        id bigserial primary key,
+        created_at timestamptz default now(),
+        body text not null check (char_length(body) between 1 and 140)
+      );
+      alter table pulse enable row level security;
+      alter table visits enable row level security;
+      alter table words enable row level security;
+      create policy p_read on pulse for select using (true);
+      create policy v_read on visits for select using (true);
+      create policy w_read on words for select using (true);
+      create policy w_write on words for insert with check (true);
+
+      -- The only way to touch the clock. Saves it, or records its death,
+      -- atomically, on server time. Nothing else can write to pulse or visits.
+      create or replace function heartbeat()
+      returns json language plpgsql security definer set search_path = public as $$
+      declare
+        p pulse%rowtype; deadline timestamptz; remaining bigint; new_closest bigint;
+      begin
+        select * into p from pulse where id = 1 for update;
+        deadline := p.last_visit + interval '24 hours';
+        if p.dead then
+          return json_build_object('dead', true, 'born', p.born,
+            'died_at', p.died_at, 'saves', p.saves, 'closest_ms', p.closest_ms);
+        end if;
+        if now() >= deadline then
+          update pulse set dead = true, died_at = deadline where id = 1;
+          return json_build_object('dead', true, 'born', p.born,
+            'died_at', deadline, 'saves', p.saves, 'closest_ms', p.closest_ms);
+        end if;
+        remaining := floor(extract(epoch from (deadline - now())) * 1000);
+        new_closest := least(coalesce(p.closest_ms, remaining), remaining);
+        update pulse set last_visit = now(), saves = p.saves + 1, closest_ms = new_closest where id = 1;
+        insert into visits (remaining_ms) values (remaining);
+        return json_build_object('dead', false, 'born', p.born,
+          'saves', p.saves + 1, 'closest_ms', new_closest, 'remaining_ms', remaining);
+      end; $$;
+      grant execute on function heartbeat() to anon;
 
    3. Paste your project URL and anon key below.
    ============================================================ */
@@ -441,7 +501,8 @@ function ago(t){
 }
 
 /* ---------- data layer ---------- */
-
+/* One server call does everything atomically on server time:
+   saves it if alive, or discovers and records its death. */
 function heartbeat(cb){
   if(demo){
     var remaining = (2 + Math.random()*19) * 3600 * 1000;
@@ -611,7 +672,7 @@ function tick(){
   var left = deadlineAt - Date.now();
   if(left <= 0){
     if(demo){ die(deadlineAt); return; }
-   
+    /* only the server can declare death. If another visitor saved it meanwhile, this call revives our clock instead. */
     heartbeat(function(p){
       if(p.dead){ die(p.died_at || deadlineAt); return; }
       deadlineAt = Date.now() + DAY;
