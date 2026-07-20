@@ -49,9 +49,38 @@
     left:50%;bottom:-8px;
     transform:translateX(-50%);
     width:340px;height:280px;
-    pointer-events:none;
+    pointer-events:auto;
   }
+  canvas.flame-gl.reachable{cursor:pointer}
   body.gl .flame{display:none}
+  .ember-reveal{
+    position:absolute;
+    left:50%;top:-14px;
+    transform:translateX(-50%) translateY(6px);
+    width:300px;
+    text-align:center;
+    font-style:italic;
+    font-size:15px;
+    line-height:1.5;
+    color:var(--bone);
+    pointer-events:none;
+    opacity:0;
+    transition:opacity .5s ease, transform .5s ease;
+    text-shadow:0 0 20px rgba(0,0,0,.9), 0 0 8px rgba(0,0,0,.9);
+    z-index:3;
+  }
+  .ember-reveal.on{opacity:1;transform:translateX(-50%) translateY(0)}
+  .ember-hint{
+    font-size:10px;
+    letter-spacing:.28em;
+    text-transform:uppercase;
+    color:#5A5245;
+    margin-top:8px;
+    min-height:14px;
+    opacity:0;
+    transition:opacity 1s ease;
+  }
+  .ember-hint.on{opacity:1}
   .wind-line{
     font-size:11px;
     font-style:italic;
@@ -312,16 +341,18 @@
 </head>
 <body>
 
-<p class="demo-note" id="demoNote" hidden>demo heart &middot; connect a database to make me real</p>
+<p class="demo-note" id="demoNote" hidden>preview mode &middot; running on simulated data</p>
 
 <!-- ========== ALIVE ========== -->
 <div class="living" id="living">
   <div class="altar" id="altarLive">
+    <div class="ember-reveal" id="emberReveal"></div>
     <div class="smoke" aria-hidden="true"></div>
     <div class="flame-wrap"><div class="flame" aria-hidden="true"></div></div>
     <div class="wick" aria-hidden="true"></div>
   </div>
   <button class="listen" id="btnListen" type="button" aria-pressed="false">Listen</button>
+  <p class="ember-hint" id="emberHint"></p>
   <p class="wind-line" id="windLine"></p>
 
   <h1>I am still alive</h1>
@@ -399,86 +430,26 @@
 (function(){
 "use strict";
 
-/* ============================================================
-   CONFIG. Leave blank to run on a simulated demo heart.
-   To make it real (free):
-   1. Create a Supabase project (free tier).
-   2. Run this SQL in the SQL editor:
+// Runtime configuration. Absent credentials fall back to a self-contained preview mode.
+const SUPABASE_URL = "https://mgxfrixxqtqcbinunvgi.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1neGZyaXh4cXRxY2JpbnVudmdpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ1MDY3NDIsImV4cCI6MjEwMDA4Mjc0Mn0.1SW0kegCh-iVwI-DRdyGmbehB2yahLidMJGav_NIj0o";
+const SITE_URL     = "websitethatdies.github.io";
+const KOFI_URL     = "https://ko-fi.com/websitethatdies";
 
-      create table pulse (
-        id int primary key,
-        born timestamptz not null,
-        last_visit timestamptz not null,
-        dead boolean default false,
-        died_at timestamptz,
-        saves bigint default 0,
-        closest_ms bigint
-      );
-      insert into pulse values (1, now(), now(), false, null, 0, null);
-      create table visits (
-        id bigserial primary key,
-        created_at timestamptz default now(),
-        remaining_ms bigint
-      );
-      create table words (
-        id bigserial primary key,
-        created_at timestamptz default now(),
-        body text not null check (char_length(body) between 1 and 140)
-      );
-      alter table pulse enable row level security;
-      alter table visits enable row level security;
-      alter table words enable row level security;
-      create policy p_read on pulse for select using (true);
-      create policy v_read on visits for select using (true);
-      create policy w_read on words for select using (true);
-      create policy w_write on words for insert with check (true);
+const DAY = 24 * 60 * 60 * 1000;
+const FINAL_HOURS = 2;                 // window in which the piano falls silent
+const $ = (id) => document.getElementById(id);
+const preview = !SUPABASE_URL || !SUPABASE_KEY;
 
-      -- The only way to touch the clock. Saves it, or records its death,
-      -- atomically, on server time. Nothing else can write to pulse or visits.
-      create or replace function heartbeat()
-      returns json language plpgsql security definer set search_path = public as $$
-      declare
-        p pulse%rowtype; deadline timestamptz; remaining bigint; new_closest bigint;
-      begin
-        select * into p from pulse where id = 1 for update;
-        deadline := p.last_visit + interval '24 hours';
-        if p.dead then
-          return json_build_object('dead', true, 'born', p.born,
-            'died_at', p.died_at, 'saves', p.saves, 'closest_ms', p.closest_ms);
-        end if;
-        if now() >= deadline then
-          update pulse set dead = true, died_at = deadline where id = 1;
-          return json_build_object('dead', true, 'born', p.born,
-            'died_at', deadline, 'saves', p.saves, 'closest_ms', p.closest_ms);
-        end if;
-        remaining := floor(extract(epoch from (deadline - now())) * 1000);
-        new_closest := least(coalesce(p.closest_ms, remaining), remaining);
-        update pulse set last_visit = now(), saves = p.saves + 1, closest_ms = new_closest where id = 1;
-        insert into visits (remaining_ms) values (remaining);
-        return json_build_object('dead', false, 'born', p.born,
-          'saves', p.saves + 1, 'closest_ms', new_closest, 'remaining_ms', remaining);
-      end; $$;
-      grant execute on function heartbeat() to anon;
+let deadlineAt = 0, born = 0, saves = 0, closest = null;
 
-   3. Paste your project URL and anon key below.
-   ============================================================ */
-var SUPABASE_URL = "https://mgxfrixxqtqcbinunvgi.supabase.co";
-var SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1neGZyaXh4cXRxY2JpbnVudmdpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ1MDY3NDIsImV4cCI6MjEwMDA4Mjc0Mn0.1SW0kegCh-iVwI-DRdyGmbehB2yahLidMJGav_NIj0o";
-var SITE_URL = "websitethatdies.github.io"; /* your deployed URL, used in the share text */
-var KOFI_URL = "https://ko-fi.com/websitethatdies"; 
-
-var DAY = 24*60*60*1000;
-var $ = function(id){ return document.getElementById(id); };
-var demo = !SUPABASE_URL || !SUPABASE_KEY;
-var deadlineAt = 0, born = 0, saves = 0, closest = null;
-
-function hdrs(){
-  return {
+// Supabase anon key is a public client credential; table access is governed by RLS.
+function authHeaders(extra) {
+  return Object.assign({
     "apikey": SUPABASE_KEY,
     "Authorization": "Bearer " + SUPABASE_KEY,
-    "Content-Type": "application/json",
-    "Prefer": "return=representation"
-  };
+    "Content-Type": "application/json"
+  }, extra || {});
 }
 
 function fmt(ms){
@@ -504,7 +475,7 @@ function ago(t){
 /* One server call does everything atomically on server time:
    saves it if alive, or discovers and records its death. */
 function heartbeat(cb){
-  if(demo){
+  if(preview){
     var remaining = (2 + Math.random()*19) * 3600 * 1000;
     cb({
       dead:false,
@@ -515,7 +486,7 @@ function heartbeat(cb){
     });
     return;
   }
-  fetch(SUPABASE_URL + "/rest/v1/rpc/heartbeat", {method:"POST", headers:hdrs(), body:"{}"})
+  fetch(SUPABASE_URL + "/rest/v1/rpc/heartbeat", {method:"POST", headers:authHeaders(), body:"{}"})
     .then(function(r){ return r.json(); })
     .then(function(p){
       cb({
@@ -548,7 +519,7 @@ function loadLedger(){
       list.appendChild(li);
     });
   }
-  if(demo){
+  if(preview){
     render([
       {remaining_ms: 4*3600000 + 12*60000, at: Date.now() - 40*60000},
       {remaining_ms: 11*3600000 + 3*60000, at: Date.now() - 7*3600000},
@@ -558,7 +529,7 @@ function loadLedger(){
     ]);
     return;
   }
-  fetch(SUPABASE_URL + "/rest/v1/visits?select=created_at,remaining_ms&order=created_at.desc&limit=5", {headers:hdrs()})
+  fetch(SUPABASE_URL + "/rest/v1/visits?select=created_at,remaining_ms&order=created_at.desc&limit=5", {headers:authHeaders()})
     .then(function(r){ return r.json(); })
     .then(function(rows){
       render(rows.map(function(v){ return {remaining_ms:v.remaining_ms, at:Date.parse(v.created_at)}; }));
@@ -568,11 +539,12 @@ function loadLedger(){
 /* ---------- words ---------- */
 var wordLeft = false;
 var wordCount = null;
+var emberTexts = [];   /* recent memory bodies, shared with the readable ember field */
 function loadWordCount(){
-  if(demo){ wordCount = 1187; $("stMem").textContent = wordCount.toLocaleString(); if(glState) glState.setEmbers(wordCount); return; }
+  if(preview){ wordCount = 1187; $("stMem").textContent = wordCount.toLocaleString(); if(glState) glState.setEmbers(wordCount); return; }
   fetch(SUPABASE_URL + "/rest/v1/words?select=id", {
     method:"HEAD",
-    headers: Object.assign(hdrs(), {"Prefer":"count=exact", "Range":"0-0"})
+    headers: authHeaders({ "Prefer": "count=exact", "Range": "0-0" })
   }).then(function(r){
     var cr = r.headers.get("content-range");
     if(cr && cr.indexOf("/") >= 0){
@@ -595,21 +567,31 @@ function renderWords(rows){
     li.appendChild(t);
     list.appendChild(li);
   });
+  /* the readable ember field draws from the same memories */
+  emberTexts = rows.map(function(w){ return w.body; });
+  if(glState) glState.setMemories(emberTexts);
 }
 function loadWords(){
-  if(demo){
+  if(preview){
     renderWords([
       {body:"the way my mom hummed while she cooked. i never learned the song", at: Date.now() - 22*60000},
       {body:"my brother laughing so hard in the back seat he couldn't breathe", at: Date.now() - 5*3600000},
       {body:"grandpa's keys in the door at 5:40, every single day", at: Date.now() - 14*3600000},
-      {body:"she always said see you in a bit. never goodbye", at: Date.now() - 30*3600000}
+      {body:"she always said see you in a bit. never goodbye", at: Date.now() - 30*3600000},
+      {body:"how the whole house smelled like coffee before anyone was awake", at: Date.now() - 2*DAY},
+      {body:"dad calling me kiddo even when I was forty", at: Date.now() - 3*DAY},
+      {body:"her handwriting on the back of every photograph", at: Date.now() - 4*DAY},
+      {body:"the sound of his slippers down the hall", at: Date.now() - 5*DAY}
     ]);
     return;
   }
-  fetch(SUPABASE_URL + "/rest/v1/words?select=created_at,body&order=created_at.desc&limit=8", {headers:hdrs()})
+  fetch(SUPABASE_URL + "/rest/v1/words?select=created_at,body&order=created_at.desc&limit=40", {headers:authHeaders()})
     .then(function(r){ return r.json(); })
     .then(function(rows){
-      renderWords(rows.map(function(w){ return {body:w.body, at:Date.parse(w.created_at)}; }));
+      var mapped = rows.map(function(w){ return {body:w.body, at:Date.parse(w.created_at)}; });
+      renderWords(mapped.slice(0, 8));   /* the list stays short */
+      emberTexts = mapped.map(function(w){ return w.body; });  /* the field is richer */
+      if(glState) glState.setMemories(emberTexts);
     }).catch(function(){});
 }
 function loadFinalWord(){
@@ -618,8 +600,8 @@ function loadFinalWord(){
     $("epFinalText").textContent = "\u201C" + body + "\u201D";
     $("epFinal").hidden = false;
   }
-  if(demo){ show("she always said see you in a bit. never goodbye"); return; }
-  fetch(SUPABASE_URL + "/rest/v1/words?select=body&order=created_at.desc&limit=1", {headers:hdrs()})
+  if(preview){ show("she always said see you in a bit. never goodbye"); return; }
+  fetch(SUPABASE_URL + "/rest/v1/words?select=body&order=created_at.desc&limit=1", {headers:authHeaders()})
     .then(function(r){ return r.json(); })
     .then(function(rows){ if(rows && rows[0]) show(rows[0].body); })
     .catch(function(){});
@@ -633,9 +615,9 @@ $("wordBtn").addEventListener("click", function(){
     note.textContent = "No links. Just words."; note.className = "word-note err"; return;
   }
   wordLeft = true;
-  if(!demo){
+  if(!preview){
     fetch(SUPABASE_URL + "/rest/v1/words", {
-      method:"POST", headers: hdrs(),
+      method:"POST", headers: authHeaders(),
       body: JSON.stringify({body: body})
     }).catch(function(){});
   }
@@ -648,7 +630,13 @@ $("wordBtn").addEventListener("click", function(){
   $("wordForm").style.display = "none";
   note.textContent = "I will hold it for as long as I live.";
   note.className = "word-note";
-  if(wordCount !== null){ wordCount++; $("stMem").textContent = wordCount.toLocaleString(); if(glState) glState.setEmbers(wordCount); }
+  if(wordCount !== null){ wordCount++; $("stMem").textContent = wordCount.toLocaleString(); }
+  /* your memory becomes an ember immediately, and briefly surfaces */
+  emberTexts.unshift(body);
+  if(glState){
+    glState.setMemories(emberTexts);
+    setTimeout(function(){ if(glState && glState.focusNewest) glState.focusNewest(); }, 400);
+  }
 });
 $("wordIn").addEventListener("keydown", function(e){
   if(e.key === "Enter"){ $("wordBtn").click(); }
@@ -671,7 +659,7 @@ function die(diedAt){
 function tick(){
   var left = deadlineAt - Date.now();
   if(left <= 0){
-    if(demo){ die(deadlineAt); return; }
+    if(preview){ die(deadlineAt); return; }
     /* only the server can declare death. If another visitor saved it meanwhile, this call revives our clock instead. */
     heartbeat(function(p){
       if(p.dead){ die(p.died_at || deadlineAt); return; }
@@ -691,7 +679,7 @@ function tick(){
 }
 
 /* ---------- boot ---------- */
-if(demo){ $("demoNote").hidden = false; }
+if(preview){ $("demoNote").hidden = false; }
 
 if(KOFI_URL){
   $("kofiLive").href = KOFI_URL;
@@ -722,20 +710,23 @@ heartbeat(function(p){
   loadWordCount();
   tick();
 
-  /* re-sync with the shared heart every 5 minutes in case others visited */
-  if(!demo){
-    setInterval(function(){
-      fetch(SUPABASE_URL + "/rest/v1/pulse?id=eq.1&select=last_visit,dead,died_at,saves", {headers:hdrs()})
-        .then(function(r){ return r.json(); })
-        .then(function(rows){
-          var q = rows && rows[0]; if(!q) return;
-          if(q.dead){ die(q.died_at ? Date.parse(q.died_at) : Date.now()); return; }
-          var d = Date.parse(q.last_visit) + DAY;
-          if(d > deadlineAt) deadlineAt = d;
-          saves = q.saves || saves;
+  // Periodically reflect other visitors' activity. The server remains the sole
+  // authority on the deadline: last_visit only ever moves forward, so extending
+  // the local countdown to match is safe, and death is confirmed via tick().
+  if (!preview) {
+    setInterval(() => {
+      fetch(SUPABASE_URL + "/rest/v1/pulse?id=eq.1&select=last_visit,dead,died_at,saves", { headers: authHeaders() })
+        .then((r) => r.json())
+        .then((rows) => {
+          const row = rows && rows[0];
+          if (!row) return;
+          if (row.dead) { die(row.died_at ? Date.parse(row.died_at) : Date.now()); return; }
+          deadlineAt = Math.max(deadlineAt, Date.parse(row.last_visit) + DAY);
+          saves = row.saves || saves;
           $("stSaves").textContent = saves.toLocaleString();
-        }).catch(function(){});
-    }, 300000);
+        })
+        .catch(() => {});
+    }, 5 * 60 * 1000);
   }
 });
 
@@ -840,7 +831,7 @@ function audioStart(){
     });
   }
   function phrase(){
-    if(lastVital > 0.08){ /* in its final two hours, the piano falls silent */
+    if(lastVital > FINAL_HOURS/24){ /* the piano falls silent in the final hours */
       var vel = (0.018 + Math.random()*0.02) * (0.4 + 0.6*lastVital);
       var n = NOTES[Math.floor(Math.random()*NOTES.length)];
       pnote(n, vel, 0);
@@ -900,6 +891,8 @@ $("btnListen").addEventListener("click", function(){
 /* ---------- living flame (WebGL). Falls back to the CSS flame if anything is unavailable. ---------- */
 var WIND_PLACE = {name:"the North Atlantic", lat:52.0, lon:-35.5};
 var windKmh = 9; /* a default breeze until real weather arrives */
+var precip = 0;  /* 0..1 precipitation intensity from live weather */
+var isSnow = false;
 var vigor = 0;   /* recent-visit energy, set from the ledger */
 var glState = null;
 
@@ -962,50 +955,188 @@ function initFlame(){
     flame.position.y = 1.05;
     scene.add(flame);
 
-    /* embers: one drifting spark per memory */
+    /* embers: one drifting spark per memory. A subset carry readable memories. */
     var emberMat = new THREE.ShaderMaterial({
       transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
-      uniforms:{ uTime:{value:0}, uVital:{value:1}, uWind:{value:0.2} },
+      uniforms:{ uTime:{value:0}, uVital:{value:1}, uWind:{value:0.2}, uFocus:{value:-1} },
       vertexShader:[
         "attribute float seed;",
-        "uniform float uTime, uVital, uWind;",
+        "attribute float named;",     // 1.0 if this ember carries a memory
+        "attribute float idx;",       // stable index for focus matching
+        "uniform float uTime, uVital, uWind, uFocus;",
         "varying float vA;",
+        "varying float vNamed;",
         "void main(){",
-        "  float r = 0.35 + fract(seed*7.13) * 1.35;",
+        "  float r = (named > 0.5 ? 0.32 : 0.42) + fract(seed*7.13) * (named > 0.5 ? 0.85 : 1.35);",
         "  float ang = seed*6.2832 + uTime * 0.03 * (0.4 + fract(seed*3.7));",
         "  float y = fract(seed*5.31 + uTime * 0.012 * (0.35 + fract(seed*9.17))) * 2.3;",
         "  float x = cos(ang)*r + uWind * 0.25 * y * 0.3;",
         "  float z = sin(ang)*r*0.55;",
+        "  float focused = (abs(uFocus - idx) < 0.5) ? 1.0 : 0.0;",
+        "  x = mix(x, 0.0, focused*0.55);",     // focused ember drifts toward center-front
+        "  y = mix(y, 1.15, focused*0.5);",
+        "  z = mix(z, 0.9, focused);",
         "  vec4 mv = modelViewMatrix * vec4(x, y, z, 1.0);",
         "  float tw = 0.5 + 0.5*sin(uTime*(0.8 + fract(seed*13.0)*1.8) + seed*41.0);",
-        "  vA = tw * (0.18 + 0.5*uVital) * smoothstep(2.3, 1.6, y);",
-        "  gl_PointSize = (2.0 + 3.0*fract(seed*11.7)) * (300.0 / -mv.z) * 0.02 * (0.6 + 0.4*tw);",
+        "  float base = tw * (0.18 + 0.5*uVital) * smoothstep(2.3, 1.6, y);",
+        "  base += named * 0.12;",              // named embers glow a touch steadier
+        "  vA = mix(base, 1.0, focused);",
+        "  vNamed = named;",
+        "  float sz = (2.0 + 3.0*fract(seed*11.7)) * (named>0.5?1.5:1.0);",
+        "  sz *= (1.0 + focused*2.2);",
+        "  gl_PointSize = sz * (300.0 / -mv.z) * 0.02 * (0.6 + 0.4*tw);",
         "  gl_Position = projectionMatrix * mv;",
         "}"
       ].join("\n"),
       fragmentShader:[
         "varying float vA;",
+        "varying float vNamed;",
         "void main(){",
         "  float d = length(gl_PointCoord - 0.5);",
         "  float a = smoothstep(0.5, 0.1, d) * vA;",
-        "  gl_FragColor = vec4(vec3(1.0, 0.72, 0.35) * a, a);",
+        "  vec3 warm = mix(vec3(1.0, 0.72, 0.35), vec3(1.0, 0.85, 0.55), vNamed);",
+        "  gl_FragColor = vec4(warm * a, a);",
         "}"
       ].join("\n")
     });
+    emberMat.uniforms.uFocus.value = -1;
+
     var emberPoints = null;
-    function buildEmbers(count){
-      count = Math.max(40, Math.min(1200, count));
-      if(emberPoints){ scene.remove(emberPoints); emberPoints.geometry.dispose(); }
+    var emberMeta = [];   /* per-ember: {named, text} aligned to idx */
+    var memories = [];    /* current memory bodies */
+
+    function rebuildEmbers(){
+      var count = Math.max(40, Math.min(1200, wordCount || 60));
+      var namedCount = Math.min(memories.length, count);
+      if(emberPoints){ scene.remove(emberPoints); if(emberPoints.geometry && emberPoints.geometry.dispose){ emberPoints.geometry.dispose(); } }
       var geo = new THREE.BufferGeometry();
       var pos = new Float32Array(count*3);
       var seeds = new Float32Array(count);
-      for(var i = 0; i < count; i++){ seeds[i] = Math.random()*1000; }
+      var named = new Float32Array(count);
+      var idxA = new Float32Array(count);
+      emberMeta = [];
+      /* named embers first so their idx is stable and matches memories[] */
+      for(var i = 0; i < count; i++){
+        seeds[i] = Math.random()*1000;
+        idxA[i] = i;
+        if(i < namedCount){
+          named[i] = 1;
+          emberMeta.push({named:true, text:memories[i]});
+        } else {
+          named[i] = 0;
+          emberMeta.push({named:false, text:null});
+        }
+      }
       geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
       geo.setAttribute("seed", new THREE.BufferAttribute(seeds, 1));
+      geo.setAttribute("named", new THREE.BufferAttribute(named, 1));
+      geo.setAttribute("idx", new THREE.BufferAttribute(idxA, 1));
       emberPoints = new THREE.Points(geo, emberMat);
       scene.add(emberPoints);
     }
-    buildEmbers(60);
+    rebuildEmbers();
+
+    /* ---- picking: hover/tap a named ember to surface its memory ---- */
+    var raycaster = new THREE.Raycaster();
+    raycaster.params.Points.threshold = 0.12;
+    var pointer = new THREE.Vector2();
+    var focusIdx = -1, focusTimer = null;
+    var reveal = $("emberReveal"), hint = $("emberHint");
+    var canvasEl = renderer.domElement;
+
+    function pickAt(clientX, clientY){
+      var rect = canvasEl.getBoundingClientRect();
+      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      if(!emberPoints) return -1;
+      var hits = raycaster.intersectObject(emberPoints);
+      for(var i = 0; i < hits.length; i++){
+        var id = hits[i].index;
+        if(emberMeta[id] && emberMeta[id].named) return id;
+      }
+      return -1;
+    }
+    function focusEmber(id){
+      if(id === focusIdx) return;
+      focusIdx = id;
+      emberMat.uniforms.uFocus.value = id;
+      if(id >= 0 && emberMeta[id]){
+        reveal.textContent = "\u201C" + emberMeta[id].text + "\u201D";
+        reveal.classList.add("on");
+        canvasEl.classList.add("reachable");
+      } else {
+        reveal.classList.remove("on");
+        canvasEl.classList.remove("reachable");
+      }
+    }
+    canvasEl.addEventListener("mousemove", function(e){
+      focusEmber(pickAt(e.clientX, e.clientY));
+    });
+    canvasEl.addEventListener("mouseleave", function(){
+      if(focusTimer) clearTimeout(focusTimer);
+      focusEmber(-1);
+    });
+    canvasEl.addEventListener("click", function(e){
+      var id = pickAt(e.clientX, e.clientY);
+      if(id < 0){
+        /* on a miss, gently drift to a random memory so touch users still discover it */
+        var namedIds = emberMeta.map(function(m,i){return m.named?i:-1;}).filter(function(i){return i>=0;});
+        if(namedIds.length) id = namedIds[Math.floor(Math.random()*namedIds.length)];
+      }
+      focusEmber(id);
+      if(id >= 0){
+        if(focusTimer) clearTimeout(focusTimer);
+        focusTimer = setTimeout(function(){ focusEmber(-1); }, 6000);
+      }
+    }, {passive:true});
+
+    /* ---- precipitation: falls across the scene when it is raining or snowing at WIND_PLACE ---- */
+    var precipMat = new THREE.ShaderMaterial({
+      transparent:true, depthWrite:false, blending:THREE.NormalBlending,
+      uniforms:{ uTime:{value:0}, uWind:{value:0}, uPrecip:{value:0}, uSnow:{value:0} },
+      vertexShader:[
+        "attribute float seed;",
+        "uniform float uTime, uWind, uPrecip, uSnow;",
+        "varying float vA;",
+        "varying float vSnow;",
+        "void main(){",
+        "  float speed = mix(1.6, 0.35, uSnow);",           // rain fast, snow slow
+        "  float fall = fract(seed*3.71 - uTime*speed*(0.6+fract(seed*1.7)));",
+        "  float y = 2.6 - fall*3.4;",                        // top to bottom
+        "  float drift = uSnow * sin(uTime*1.3 + seed*30.0) * 0.25;",
+        "  float x = (fract(seed*7.13)*2.0 - 1.0)*1.7 + uWind*0.6*(1.0-fall) + drift;",
+        "  float z = (fract(seed*5.19)*2.0 - 1.0)*1.0;",
+        "  vec4 mv = modelViewMatrix * vec4(x, y, z, 1.0);",
+        "  vA = step(fract(seed*9.4), uPrecip);",             // only uPrecip fraction are active
+        "  vSnow = uSnow;",
+        "  gl_PointSize = mix(2.0, 4.5, uSnow) * (300.0/-mv.z) * 0.02;",
+        "  gl_Position = projectionMatrix * mv;",
+        "}"
+      ].join("\n"),
+      fragmentShader:[
+        "varying float vA;",
+        "varying float vSnow;",
+        "void main(){",
+        "  vec2 pc = gl_PointCoord - 0.5;",
+        "  float d = length(vec2(pc.x, pc.y*mix(0.35, 1.0, vSnow)));", // rain = vertical streak, snow = round
+        "  float a = smoothstep(0.5, 0.05, d) * vA * mix(0.5, 0.85, vSnow);",
+        "  vec3 col = mix(vec3(0.6,0.72,0.95), vec3(0.95,0.97,1.0), vSnow);",
+        "  gl_FragColor = vec4(col*a, a);",
+        "}"
+      ].join("\n")
+    });
+    (function(){
+      var N = 300;
+      var geo = new THREE.BufferGeometry();
+      var pos = new Float32Array(N*3);
+      var seeds = new Float32Array(N);
+      for(var i=0;i<N;i++){ seeds[i] = Math.random()*1000; }
+      geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute("seed", new THREE.BufferAttribute(seeds, 1));
+      var rain = new THREE.Points(geo, precipMat);
+      scene.add(rain);
+    })();
 
     var running = true, t0 = performance.now();
     function frame(){
@@ -1013,14 +1144,20 @@ function initFlame(){
       var t = (performance.now() - t0) / 1000;
       var windN = Math.min(1, windKmh / 45);
       var gutter = lastVital < (1/24) ? Math.min(1, ((1/24) - lastVital) * 48) : 0;
+      /* heavy rain also makes the flame cower and struggle */
+      var rainPressure = isSnow ? 0 : precip * 0.5;
       flameMat.uniforms.uTime.value = t;
       flameMat.uniforms.uVital.value = lastVital;
       flameMat.uniforms.uWind.value = 0.12 + windN * 0.8;
-      flameMat.uniforms.uGutter.value = gutter;
+      flameMat.uniforms.uGutter.value = Math.min(1, gutter + rainPressure);
       flameMat.uniforms.uVigor.value = vigor;
       emberMat.uniforms.uTime.value = t;
       emberMat.uniforms.uVital.value = lastVital;
       emberMat.uniforms.uWind.value = windN;
+      precipMat.uniforms.uTime.value = t;
+      precipMat.uniforms.uWind.value = windN;
+      precipMat.uniforms.uPrecip.value = precip;
+      precipMat.uniforms.uSnow.value = isSnow ? 1 : 0;
       renderer.render(scene, camera);
       requestAnimationFrame(frame);
     }
@@ -1037,7 +1174,21 @@ function initFlame(){
         if(el && el.parentNode){ el.parentNode.removeChild(el); }
         try{ renderer.dispose(); }catch(e){}
       },
-      setEmbers: buildEmbers
+      setEmbers: function(){ rebuildEmbers(); },
+      setMemories: function(list){
+        memories = (list || []).slice(0, 200);
+        rebuildEmbers();
+        if(memories.length){
+          hint.textContent = "every ember is a memory \u00B7 touch one";
+          hint.classList.add("on");
+        }
+      },
+      focusNewest: function(){
+        if(!emberMeta.length || !emberMeta[0].named) return;
+        focusEmber(0);
+        if(focusTimer) clearTimeout(focusTimer);
+        focusTimer = setTimeout(function(){ focusEmber(-1); }, 5000);
+      }
     };
     document.body.classList.add("gl");
     requestAnimationFrame(frame);
@@ -1045,19 +1196,42 @@ function initFlame(){
 }
 
 function fetchWind(){
-  fetch("https://api.open-meteo.com/v1/forecast?latitude=" + WIND_PLACE.lat + "&longitude=" + WIND_PLACE.lon + "&current=wind_speed_10m")
+  var url = "https://api.open-meteo.com/v1/forecast?latitude=" + WIND_PLACE.lat +
+    "&longitude=" + WIND_PLACE.lon +
+    "&current=wind_speed_10m,precipitation,weather_code,temperature_2m";
+  fetch(url)
     .then(function(r){ return r.json(); })
     .then(function(j){
-      if(j && j.current && typeof j.current.wind_speed_10m === "number"){
-        windKmh = j.current.wind_speed_10m;
-        $("windLine").textContent = "the wind over " + WIND_PLACE.name + " is " + Math.round(windKmh) + " km/h right now. it reaches me.";
+      if(!j || !j.current) return;
+      var c = j.current;
+      if(typeof c.wind_speed_10m === "number") windKmh = c.wind_speed_10m;
+      var mm = (typeof c.precipitation === "number") ? c.precipitation : 0;
+      var code = c.weather_code;
+      var temp = c.temperature_2m;
+      /* snow codes: 71-77 and 85/86; also treat near-freezing precip as snow */
+      isSnow = (code >= 71 && code <= 77) || code === 85 || code === 86 ||
+               (mm > 0 && typeof temp === "number" && temp <= 0.5);
+      /* map mm/h to 0..1: a light drizzle ~0.1mm, heavy rain ~4mm+ */
+      precip = Math.max(0, Math.min(1, mm / 4));
+      /* even trace precip should be visible */
+      if(mm > 0 && precip < 0.12) precip = 0.12;
+
+      var line = "the wind over " + WIND_PLACE.name + " is " + Math.round(windKmh) + " km/h right now.";
+      if(precip > 0){
+        line += isSnow ? " it is snowing there. it reaches me." : " it is raining there. it reaches me.";
+      } else {
+        line += " it reaches me.";
       }
+      $("windLine").textContent = line;
     }).catch(function(){});
 }
 fetchWind();
 setInterval(fetchWind, 15*60*1000);
 initFlame();
-if(glState && wordCount !== null){ glState.setEmbers(wordCount); }
+if(glState){
+  if(emberTexts.length) glState.setMemories(emberTexts);
+  else if(wordCount !== null) glState.setEmbers();
+}
 
 /* ---------- share ---------- */
 $("btnTell").addEventListener("click", function(){
