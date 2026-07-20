@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>I am still alive</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <meta name="description" content="A website that holds people's memories of the ones they miss. If nobody visits for 24 hours, it deletes itself and everything it holds. It is alive right now.">
 <meta property="og:title" content="I am still alive">
 <meta property="og:description" content="This website holds memories of people who are gone. If nobody visits for 24 hours, it deletes itself and everything it holds. Every visit buys everyone five more minutes.">
@@ -52,7 +53,10 @@
     pointer-events:auto;
   }
   canvas.flame-gl.reachable{cursor:pointer}
+  canvas.flame-gl.connecting{cursor:crosshair}
   body.gl .flame{display:none}
+  .thread-btn{display:none}
+  body.gl .thread-btn.shown{display:inline-block}
   .ember-reveal{
     position:absolute;
     left:50%;top:-14px;
@@ -353,7 +357,9 @@
   </div>
   <button class="listen" id="btnListen" type="button" aria-pressed="false">Listen</button>
   <p class="ember-hint" id="emberHint"></p>
+  <button class="listen thread-btn" id="threadToggle" type="button" aria-pressed="false" hidden>Draw a thread</button>
   <p class="wind-line" id="windLine"></p>
+  <p class="wind-line" id="choirLine"></p>
 
   <h1>I am still alive</h1>
   <div class="clock" id="clock" aria-live="off">--:--:--</div>
@@ -923,11 +929,13 @@ function initFlame(){
     var flameMat = new THREE.ShaderMaterial({
       transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
       uniforms:{
-        uTime:{value:0}, uVital:{value:1}, uWind:{value:0.2}, uGutter:{value:0}, uVigor:{value:0}
+        uTime:{value:0}, uVital:{value:1}, uWind:{value:0.2}, uGutter:{value:0}, uVigor:{value:0},
+        uTint:{value:new THREE.Color(1,1,1)}
       },
       vertexShader:"varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
       fragmentShader:[
         "uniform float uTime, uVital, uWind, uGutter, uVigor;",
+        "uniform vec3 uTint;",
         "varying vec2 vUv;",
         NOISE,
         "void main(){",
@@ -945,6 +953,7 @@ function initFlame(){
         "  vec3 col = mix(vec3(0.45, 0.05, 0.01), vec3(0.95, 0.42, 0.07), shape);",
         "  col = mix(col, vec3(1.0, 0.83, 0.5), core);",
         "  col = mix(col, vec3(1.0, 0.97, 0.86), smoothstep(0.72, 1.0, core));",
+        "  col *= uTint;",
         "  float alpha = shape * (0.8 + 0.2*sin(uTime*8.0 + n*7.0));",
         "  alpha *= smoothstep(0.0, 0.05, uv.y);",
         "  gl_FragColor = vec4(col * alpha, alpha);",
@@ -1002,8 +1011,15 @@ function initFlame(){
     emberMat.uniforms.uFocus.value = -1;
 
     var emberPoints = null;
-    var emberMeta = [];   /* per-ember: {named, text} aligned to idx */
+    var emberMeta = [];   /* per-ember: {named, text, seed} aligned to idx */
     var memories = [];    /* current memory bodies */
+
+    /* deterministic seed per memory so the same memory occupies the same place for everyone */
+    function memHash(str){
+      var h = 2166136261;
+      for(var i=0;i<str.length;i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+      return ((h >>> 0) % 100000) / 100; // 0..1000
+    }
 
     function rebuildEmbers(){
       var count = Math.max(40, Math.min(1200, wordCount || 60));
@@ -1017,14 +1033,16 @@ function initFlame(){
       emberMeta = [];
       /* named embers first so their idx is stable and matches memories[] */
       for(var i = 0; i < count; i++){
-        seeds[i] = Math.random()*1000;
         idxA[i] = i;
         if(i < namedCount){
+          var s = memHash(memories[i]);
+          seeds[i] = s;
           named[i] = 1;
-          emberMeta.push({named:true, text:memories[i]});
+          emberMeta.push({named:true, text:memories[i], seed:s});
         } else {
+          seeds[i] = Math.random()*1000;
           named[i] = 0;
-          emberMeta.push({named:false, text:null});
+          emberMeta.push({named:false, text:null, seed:seeds[i]});
         }
       }
       geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
@@ -1033,8 +1051,20 @@ function initFlame(){
       geo.setAttribute("idx", new THREE.BufferAttribute(idxA, 1));
       emberPoints = new THREE.Points(geo, emberMat);
       scene.add(emberPoints);
+      rebuildConstellation();
     }
-    rebuildEmbers();
+
+    /* mirror of the ember vertex shader position math, for drawing connecting lines */
+    function emberWorldPos(seed, named, t){
+      var r = (named ? 0.32 : 0.42) + fractf(seed*7.13) * (named ? 0.85 : 1.35);
+      var ang = seed*6.2832 + t * 0.03 * (0.4 + fractf(seed*3.7));
+      var y = fractf(seed*5.31 + t * 0.012 * (0.35 + fractf(seed*9.17))) * 2.3;
+      var windN = Math.min(1, windKmh / 45);
+      var x = Math.cos(ang)*r + windN * 0.25 * y * 0.3;
+      var z = Math.sin(ang)*r*0.55;
+      return {x:x, y:y + 1.05, z:z}; // +flame offset (mesh sits at y=1.05 baseline via camera framing)
+    }
+    function fractf(v){ return v - Math.floor(v); }
 
     /* ---- picking: hover/tap a named ember to surface its memory ---- */
     var raycaster = new THREE.Raycaster();
@@ -1091,7 +1121,97 @@ function initFlame(){
       }
     }, {passive:true});
 
-    /* ---- precipitation: falls across the scene when it is raining or snowing at WIND_PLACE ---- */
+    /* ---- constellations: threads strangers draw between two memories, saved forever ---- */
+    var threads = [];        /* [{a:seedA, b:seedB}] */
+    var threadLine = null;
+    var connectMode = false;
+    var pendingSeed = null;
+    var threadToggle = $("threadToggle");
+
+    function rebuildConstellation(){
+      if(threadLine){ scene.remove(threadLine); if(threadLine.geometry) threadLine.geometry.dispose(); threadLine = null; }
+      if(!threads.length) return;
+      var geo = new THREE.BufferGeometry();
+      var verts = new Float32Array(threads.length * 6);
+      geo.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+      var mat = new THREE.LineBasicMaterial({ color:0xC9A227, transparent:true, opacity:0.22, blending:THREE.AdditiveBlending, depthWrite:false });
+      threadLine = new THREE.LineSegments(geo, mat);
+      scene.add(threadLine);
+    }
+    function updateConstellation(t){
+      if(!threadLine || !threads.length) return;
+      var arr = threadLine.geometry.attributes.position.array;
+      for(var i=0;i<threads.length;i++){
+        var pa = emberWorldPos(threads[i].a, true, t);
+        var pb = emberWorldPos(threads[i].b, true, t);
+        arr[i*6+0]=pa.x; arr[i*6+1]=pa.y-1.05; arr[i*6+2]=pa.z;
+        arr[i*6+3]=pb.x; arr[i*6+4]=pb.y-1.05; arr[i*6+5]=pb.z;
+      }
+      threadLine.geometry.attributes.position.needsUpdate = true;
+    }
+    function addThread(seedA, seedB, persist){
+      if(seedA === seedB) return;
+      for(var i=0;i<threads.length;i++){
+        if((threads[i].a===seedA&&threads[i].b===seedB)||(threads[i].a===seedB&&threads[i].b===seedA)) return;
+      }
+      threads.push({a:seedA, b:seedB});
+      rebuildConstellation();
+      if(persist && !preview && SUPABASE_URL && SUPABASE_KEY){
+        fetch(SUPABASE_URL + "/rest/v1/threads", {
+          method:"POST", headers: authHeaders(),
+          body: JSON.stringify({ seed_a: seedA, seed_b: seedB })
+        }).catch(function(){});
+      }
+    }
+    function loadThreads(){
+      if(preview){
+        /* a few sample threads between the seeded memories */
+        if(emberMeta.length > 4){
+          addThread(emberMeta[0].seed, emberMeta[2].seed, false);
+          addThread(emberMeta[1].seed, emberMeta[3].seed, false);
+        }
+        return;
+      }
+      if(!SUPABASE_URL || !SUPABASE_KEY) return;
+      fetch(SUPABASE_URL + "/rest/v1/threads?select=seed_a,seed_b&order=created_at.desc&limit=500", { headers: authHeaders() })
+        .then(function(r){ return r.json(); })
+        .then(function(rows){
+          if(!Array.isArray(rows)) return;
+          rows.forEach(function(row){ addThread(row.seed_a, row.seed_b, false); });
+        }).catch(function(){});
+    }
+    if(threadToggle){
+      threadToggle.addEventListener("click", function(){
+        connectMode = !connectMode;
+        pendingSeed = null;
+        threadToggle.setAttribute("aria-pressed", connectMode ? "true" : "false");
+        threadToggle.textContent = connectMode ? "Choosing... (tap two memories)" : "Draw a thread";
+        canvasEl.classList.toggle("connecting", connectMode);
+        focusEmber(-1);
+      });
+    }
+    /* in connect mode, taps pick two named embers and thread them */
+    canvasEl.addEventListener("click", function(e){
+      if(!connectMode) return;
+      var id = pickAt(e.clientX, e.clientY);
+      if(id < 0 || !emberMeta[id] || !emberMeta[id].named) return;
+      var seed = emberMeta[id].seed;
+      focusEmber(id);
+      if(pendingSeed === null){
+        pendingSeed = seed;
+        if(threadToggle) threadToggle.textContent = "Now tap the second memory";
+      } else {
+        addThread(pendingSeed, seed, true);
+        pendingSeed = null;
+        connectMode = false;
+        if(threadToggle){
+          threadToggle.setAttribute("aria-pressed","false");
+          threadToggle.textContent = "Draw a thread";
+        }
+        canvasEl.classList.remove("connecting");
+        if(hint){ hint.textContent = "a thread now joins them, for as long as I live"; hint.classList.add("on"); }
+      }
+    }, {passive:true});
     var precipMat = new THREE.ShaderMaterial({
       transparent:true, depthWrite:false, blending:THREE.NormalBlending,
       uniforms:{ uTime:{value:0}, uWind:{value:0}, uPrecip:{value:0}, uSnow:{value:0} },
@@ -1138,7 +1258,85 @@ function initFlame(){
       scene.add(rain);
     })();
 
+    /* ---- the choir: other visitors here right now, as soft orbiting lights ---- */
+    var presenceMat = new THREE.ShaderMaterial({
+      transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
+      uniforms:{ uTime:{value:0}, uCount:{value:0} },
+      vertexShader:[
+        "attribute float slot;",                            // 0..127, this light's index
+        "uniform float uTime, uCount;",
+        "varying float vA;",
+        "void main(){",
+        "  float lit = step(slot + 0.5, uCount);",        // lit if slot < count
+        "  float ang = slot*2.399963 + uTime*0.12;",         // golden-angle spread, slow orbit
+        "  float r = 1.15 + 0.35*sin(slot*1.7);",
+        "  float y = 0.8 + 0.5*sin(slot*2.3 + uTime*0.2);",
+        "  vec3 wp = vec3(cos(ang)*r, y, sin(ang)*r*0.7);",
+        "  vec4 mv = modelViewMatrix * vec4(wp, 1.0);",
+        "  float pulse = 0.6 + 0.4*sin(uTime*1.1 + slot*3.0);",
+        "  vA = lit * pulse * 0.5;",
+        "  gl_PointSize = 9.0 * (300.0/-mv.z) * 0.02 * pulse;",
+        "  gl_Position = projectionMatrix * mv;",
+        "}"
+      ].join("\n"),
+      fragmentShader:[
+        "varying float vA;",
+        "void main(){",
+        "  float d = length(gl_PointCoord - 0.5);",
+        "  float a = smoothstep(0.5, 0.0, d) * vA;",
+        "  gl_FragColor = vec4(vec3(0.85,0.90,1.0)*a, a);", // soft cool white, distinct from embers
+        "}"
+      ].join("\n")
+    });
+    var presenceCount = 0;
+    (function(){
+      var N = 128;
+      var geo = new THREE.BufferGeometry();
+      var pos = new Float32Array(N*3);
+      var slots = new Float32Array(N);
+      for(var i=0;i<N;i++){ slots[i] = i; }
+      geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute("slot", new THREE.BufferAttribute(slots, 1));
+      var pts = new THREE.Points(geo, presenceMat);
+      scene.add(pts);
+    })();
+
     var running = true, t0 = performance.now();
+
+    /* ---- seasons of light: the flame and the void follow the visitor's local hour ---- */
+    var tint = {r:1, g:1, b:1};
+    function seasonOfLight(){
+      var now = new Date();
+      var hour = now.getHours() + now.getMinutes()/60;
+      // keyframes: [hour, flameTint rgb, voidCenter rgb]
+      var keys = [
+        [0,  [0.72,0.80,1.05], [0.055,0.070,0.115]],  // deep night, cold blue
+        [5,  [0.80,0.85,1.02], [0.070,0.075,0.100]],  // pre-dawn
+        [7,  [1.05,0.92,0.80], [0.150,0.110,0.080]],  // dawn, warm
+        [12, [1.00,0.98,0.95], [0.130,0.105,0.078]],  // midday, neutral-warm
+        [18, [1.08,0.85,0.68], [0.150,0.095,0.070]],  // dusk, amber
+        [21, [0.95,0.82,0.85], [0.100,0.075,0.085]],  // late evening, dim rose
+        [24, [0.72,0.80,1.05], [0.055,0.070,0.115]]   // wrap to night
+      ];
+      var a = keys[0], b = keys[keys.length-1];
+      for(var i=0;i<keys.length-1;i++){
+        if(hour >= keys[i][0] && hour < keys[i+1][0]){ a = keys[i]; b = keys[i+1]; break; }
+      }
+      var f = (hour - a[0]) / (b[0] - a[0] || 1);
+      function lerp(x,y){ return x + (y-x)*f; }
+      tint.r = lerp(a[1][0], b[1][0]);
+      tint.g = lerp(a[1][1], b[1][1]);
+      tint.b = lerp(a[1][2], b[1][2]);
+      var vr = lerp(a[2][0], b[2][0]), vg = lerp(a[2][1], b[2][1]), vb = lerp(a[2][2], b[2][2]);
+      function to255(x){ return Math.round(Math.max(0, Math.min(1, x))*255); }
+      var c1 = "rgb(" + to255(vr) + "," + to255(vg) + "," + to255(vb) + ")";
+      var c2 = "rgb(" + to255(vr*0.55) + "," + to255(vg*0.55) + "," + to255(vb*0.6) + ")";
+      document.body.style.background =
+        "radial-gradient(ellipse 120% 80% at 50% 30%, " + c1 + " 0%, " + c2 + " 65%)";
+    }
+    seasonOfLight();
+    setInterval(seasonOfLight, 60000);
+
     function frame(){
       if(!glState || !running){ return; }
       var t = (performance.now() - t0) / 1000;
@@ -1151,6 +1349,7 @@ function initFlame(){
       flameMat.uniforms.uWind.value = 0.12 + windN * 0.8;
       flameMat.uniforms.uGutter.value = Math.min(1, gutter + rainPressure);
       flameMat.uniforms.uVigor.value = vigor;
+      flameMat.uniforms.uTint.value.setRGB(tint.r, tint.g, tint.b);
       emberMat.uniforms.uTime.value = t;
       emberMat.uniforms.uVital.value = lastVital;
       emberMat.uniforms.uWind.value = windN;
@@ -1158,6 +1357,9 @@ function initFlame(){
       precipMat.uniforms.uWind.value = windN;
       precipMat.uniforms.uPrecip.value = precip;
       precipMat.uniforms.uSnow.value = isSnow ? 1 : 0;
+      presenceMat.uniforms.uTime.value = t;
+      presenceMat.uniforms.uCount.value = presenceCount;
+      updateConstellation(t);
       renderer.render(scene, camera);
       requestAnimationFrame(frame);
     }
@@ -1178,9 +1380,11 @@ function initFlame(){
       setMemories: function(list){
         memories = (list || []).slice(0, 200);
         rebuildEmbers();
+        loadThreads();
         if(memories.length){
           hint.textContent = "every ember is a memory \u00B7 touch one";
           hint.classList.add("on");
+          if(threadToggle){ threadToggle.hidden = false; threadToggle.classList.add("shown"); }
         }
       },
       focusNewest: function(){
@@ -1188,6 +1392,9 @@ function initFlame(){
         focusEmber(0);
         if(focusTimer) clearTimeout(focusTimer);
         focusTimer = setTimeout(function(){ focusEmber(-1); }, 5000);
+      },
+      setPresence: function(others){
+        presenceCount = Math.max(0, Math.min(128, others));
       }
     };
     document.body.classList.add("gl");
@@ -1232,6 +1439,34 @@ if(glState){
   if(emberTexts.length) glState.setMemories(emberTexts);
   else if(wordCount !== null) glState.setEmbers();
 }
+
+/* ---------- the choir: live presence of other visitors ---------- */
+(function(){
+  if(preview || !window.supabase || !SUPABASE_URL || !SUPABASE_KEY) return;
+  try{
+    var client = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    var me = Math.random().toString(36).slice(2);
+    var channel = client.channel("vigil", { config: { presence: { key: me } } });
+    function updateChoir(){
+      var state = channel.presenceState();
+      var total = Object.keys(state).length;
+      var others = Math.max(0, total - 1);
+      if(glState && glState.setPresence) glState.setPresence(others);
+      var line = "";
+      if(others === 1) line = "someone else is here right now.";
+      else if(others > 1) line = others + " others are here right now.";
+      $("choirLine").textContent = line;
+    }
+    channel
+      .on("presence", { event: "sync" }, updateChoir)
+      .on("presence", { event: "join" }, updateChoir)
+      .on("presence", { event: "leave" }, updateChoir)
+      .subscribe(function(status){
+        if(status === "SUBSCRIBED"){ channel.track({ at: Date.now() }); }
+      });
+    window.addEventListener("beforeunload", function(){ try{ channel.untrack(); }catch(e){} });
+  }catch(e){ /* presence is optional; the site is whole without it */ }
+})();
 
 /* ---------- share ---------- */
 $("btnTell").addEventListener("click", function(){
