@@ -342,7 +342,7 @@
   <div class="words">
     <h2>Memories I am holding</h2>
     <div class="word-form" id="wordForm">
-      <input type="text" id="wordIn" maxlength="140" placeholder="leave a memory of someone. the small things." aria-label="Leave an anonymous memory of someone">
+      <input type="text" id="wordIn" maxlength="140" placeholder="leave a memory of someone. the small things. no names needed" aria-label="Leave an anonymous memory of someone">
       <button type="button" id="wordBtn">Leave it</button>
     </div>
     <p class="word-note" id="wordNote"></p>
@@ -429,18 +429,43 @@
       alter table visits enable row level security;
       alter table words enable row level security;
       create policy p_read on pulse for select using (true);
-      create policy p_write on pulse for update using (true);
       create policy v_read on visits for select using (true);
-      create policy v_write on visits for insert with check (true);
       create policy w_read on words for select using (true);
       create policy w_write on words for insert with check (true);
+
+      -- The only way to touch the clock. Saves it, or records its death,
+      -- atomically, on server time. Nothing else can write to pulse or visits.
+      create or replace function heartbeat()
+      returns json language plpgsql security definer set search_path = public as $$
+      declare
+        p pulse%rowtype; deadline timestamptz; remaining bigint; new_closest bigint;
+      begin
+        select * into p from pulse where id = 1 for update;
+        deadline := p.last_visit + interval '24 hours';
+        if p.dead then
+          return json_build_object('dead', true, 'born', p.born,
+            'died_at', p.died_at, 'saves', p.saves, 'closest_ms', p.closest_ms);
+        end if;
+        if now() >= deadline then
+          update pulse set dead = true, died_at = deadline where id = 1;
+          return json_build_object('dead', true, 'born', p.born,
+            'died_at', deadline, 'saves', p.saves, 'closest_ms', p.closest_ms);
+        end if;
+        remaining := floor(extract(epoch from (deadline - now())) * 1000);
+        new_closest := least(coalesce(p.closest_ms, remaining), remaining);
+        update pulse set last_visit = now(), saves = p.saves + 1, closest_ms = new_closest where id = 1;
+        insert into visits (remaining_ms) values (remaining);
+        return json_build_object('dead', false, 'born', p.born,
+          'saves', p.saves + 1, 'closest_ms', new_closest, 'remaining_ms', remaining);
+      end; $$;
+      grant execute on function heartbeat() to anon;
 
    3. Paste your project URL and anon key below.
    ============================================================ */
 var SUPABASE_URL = "https://mgxfrixxqtqcbinunvgi.supabase.co";
 var SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1neGZyaXh4cXRxY2JpbnVudmdpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ1MDY3NDIsImV4cCI6MjEwMDA4Mjc0Mn0.1SW0kegCh-iVwI-DRdyGmbehB2yahLidMJGav_NIj0o";
 var SITE_URL = "websitethatdies.github.io"; /* your deployed URL, used in the share text */
-var KOFI_URL = "https://ko-fi.com/websitethatdies"; /* e.g. "https://ko-fi.com/websitethatdies". Leave blank to hide the flowers link. */
+var KOFI_URL = "https://ko-fi.com/websitethatdies"; 
 
 var DAY = 24*60*60*1000;
 var $ = function(id){ return document.getElementById(id); };
@@ -476,58 +501,35 @@ function ago(t){
 }
 
 /* ---------- data layer ---------- */
-function loadPulse(cb){
+/* One server call does everything atomically on server time:
+   saves it if alive, or discovers and records its death. */
+function heartbeat(cb){
   if(demo){
-    /* simulated: wake somewhere between 2h and 21h from death for drama */
     var remaining = (2 + Math.random()*19) * 3600 * 1000;
     cb({
+      dead:false,
       born: Date.now() - 17*DAY - 5*3600*1000,
-      last_visit: Date.now() - (DAY - remaining),
-      dead: false,
-      saves: 412,
-      closest_ms: 8*60*1000 + 21*1000
+      saves: 413,
+      closest_ms: 8*60*1000 + 21*1000,
+      remaining_ms: remaining
     });
     return;
   }
-  fetch(SUPABASE_URL + "/rest/v1/pulse?id=eq.1&select=*", {headers: hdrs()})
+  fetch(SUPABASE_URL + "/rest/v1/rpc/heartbeat", {method:"POST", headers:hdrs(), body:"{}"})
     .then(function(r){ return r.json(); })
-    .then(function(rows){
-      var p = rows && rows[0];
-      if(!p){ throw new Error("no pulse row"); }
+    .then(function(p){
       cb({
+        dead: !!p.dead,
         born: Date.parse(p.born),
-        last_visit: Date.parse(p.last_visit),
-        dead: p.dead,
         died_at: p.died_at ? Date.parse(p.died_at) : null,
         saves: p.saves || 0,
-        closest_ms: p.closest_ms
+        closest_ms: p.closest_ms,
+        remaining_ms: p.remaining_ms
       });
     })
     .catch(function(){
       $("savedLine").textContent = "I cannot reach my own heart right now. Stay a moment anyway.";
     });
-}
-
-function writeSave(remainingMs){
-  saves = saves + 1;
-  closest = (closest === null || remainingMs < closest) ? remainingMs : closest;
-  if(demo){ return; }
-  fetch(SUPABASE_URL + "/rest/v1/pulse?id=eq.1", {
-    method:"PATCH", headers: hdrs(),
-    body: JSON.stringify({last_visit:new Date().toISOString(), saves:saves, closest_ms:closest})
-  }).catch(function(){});
-  fetch(SUPABASE_URL + "/rest/v1/visits", {
-    method:"POST", headers: hdrs(),
-    body: JSON.stringify({remaining_ms: Math.round(remainingMs)})
-  }).catch(function(){});
-}
-
-function writeDeath(diedAt){
-  if(demo){ return; }
-  fetch(SUPABASE_URL + "/rest/v1/pulse?id=eq.1", {
-    method:"PATCH", headers: hdrs(),
-    body: JSON.stringify({dead:true, died_at:new Date(diedAt).toISOString()})
-  }).catch(function(){});
 }
 
 function loadLedger(){
@@ -669,8 +671,15 @@ function die(diedAt){
 function tick(){
   var left = deadlineAt - Date.now();
   if(left <= 0){
-    writeDeath(deadlineAt);
-    die(deadlineAt);
+    if(demo){ die(deadlineAt); return; }
+    /* only the server can declare death. If another visitor saved it meanwhile, this call revives our clock instead. */
+    heartbeat(function(p){
+      if(p.dead){ die(p.died_at || deadlineAt); return; }
+      deadlineAt = Date.now() + DAY;
+      saves = p.saves;
+      $("stSaves").textContent = saves.toLocaleString();
+      tick();
+    });
     return;
   }
   $("clock").textContent = fmt(left);
@@ -691,31 +700,20 @@ if(KOFI_URL){
   $("flowersDead").hidden = false;
 }
 
-loadPulse(function(p){
+heartbeat(function(p){
   born = p.born; saves = p.saves; closest = p.closest_ms || null;
 
   if(p.dead){
-    die(p.died_at || (p.last_visit + DAY));
+    die(p.died_at || Date.now());
     return;
   }
 
-  var deadline = p.last_visit + DAY;
-  var now = Date.now();
-
-  if(now >= deadline){
-    /* it died alone before you arrived */
-    writeDeath(deadline);
-    die(deadline);
-    return;
-  }
-
-  /* your arrival saves it */
-  var remained = deadline - now;
-  writeSave(remained);
-  deadlineAt = now + DAY;
+  /* your arrival already saved it, server-side */
+  var remained = p.remaining_ms;
+  deadlineAt = Date.now() + DAY;
 
   $("savedLine").textContent = "You arrived with " + fmt(remained) + " left on my life. I owe you a day.";
-  $("stDays").textContent = Math.max(1, Math.floor((now - born)/DAY));
+  $("stDays").textContent = Math.max(1, Math.floor((Date.now() - born)/DAY));
   $("stSaves").textContent = saves.toLocaleString();
   $("stClose").textContent = closest !== null ? fmt(closest) : "none yet";
 
