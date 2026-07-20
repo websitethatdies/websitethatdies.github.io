@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>I am still alive</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<meta name="description" content="A website that holds people's memories of the ones they miss. If nobody visits for 24 hours, it deletes itself and everything it holds. It is alive right now.">
+<meta property="og:title" content="I am still alive">
+<meta property="og:description" content="This website holds memories of people who are gone. If nobody visits for 24 hours, it deletes itself and everything it holds. Every visit buys everyone five more minutes.">
+<style>
+  :root{
+    --void:#17120E;
+    --void-2:#211A13;
+    --bone:#E9E2D0;
+    --ash:#8A8172;
+    --amber:#FFB347;
+    --flame:#E8641F;
+    --gold:#C9A227;
+    --vital:1; /* 1 = full day left, 0 = dead */
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    background:radial-gradient(ellipse 120% 80% at 50% 30%, var(--void-2) 0%, var(--void) 65%);
+    color:var(--bone);
+    font-family:"Iowan Old Style", Palatino, Georgia, serif;
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    padding:34px 20px 60px;
+    text-align:center;
+  }
+  .demo-note{
+    font-family:"Courier New", monospace;
+    font-size:10px;
+    letter-spacing:.14em;
+    color:var(--ash);
+    border:1px dashed #3A3229;
+    padding:5px 12px;
+    margin-bottom:26px;
+  }
+
+  /* ---------- flame ---------- */
+  .altar{margin:14px 0 6px;height:190px;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;position:relative}
+  canvas.flame-gl{
+    position:absolute;
+    left:50%;bottom:-8px;
+    transform:translateX(-50%);
+    width:340px;height:280px;
+    pointer-events:none;
+  }
+  body.gl .flame{display:none}
+  .wind-line{
+    font-size:11px;
+    font-style:italic;
+    color:#5A5245;
+    margin-top:6px;
+    min-height:15px;
+  }
+  .flame-wrap{
+    height:150px;display:flex;align-items:flex-end;justify-content:center;
+    transform:scaleY(calc(0.18 + 0.82 * var(--vital))) scaleX(calc(0.45 + 0.55 * var(--vital)));
+    transform-origin:bottom center;
+    transition:transform 1s linear;
+  }
+  .flame{
+    position:relative;width:44px;height:130px;
+    background:radial-gradient(ellipse 50% 62% at 50% 72%, #FFE9B0 0%, var(--amber) 34%, var(--flame) 62%, rgba(232,100,31,0) 78%);
+    border-radius:50% 50% 50% 50% / 64% 64% 36% 36%;
+    filter:blur(1.5px);
+    animation:flick 2.4s ease-in-out infinite;
+  }
+  .flame::after{
+    content:"";position:absolute;inset:38% 30% 12% 30%;
+    background:radial-gradient(ellipse at 50% 78%, #FFF6DC 0%, rgba(255,246,220,0) 70%);
+    border-radius:inherit;
+  }
+  @keyframes flick{
+    0%,100%{transform:skewX(0deg) scale(1)}
+    22%{transform:skewX(2.5deg) scale(1.04,0.97)}
+    48%{transform:skewX(-2deg) scale(0.97,1.05)}
+    74%{transform:skewX(1.5deg) scale(1.02,0.99)}
+  }
+  body.guttering .flame{animation-duration:.7s;filter:blur(2.5px) saturate(1.3)}
+  body.dead .flame{display:none}
+  .wick{width:4px;height:16px;background:#0C0906;border-radius:2px}
+  .smoke{
+    display:none;width:2px;height:70px;margin-bottom:6px;
+    background:linear-gradient(to top, rgba(138,129,114,.6), rgba(138,129,114,0));
+    filter:blur(2px);
+    animation:rise 5s ease-out infinite;
+  }
+  @keyframes rise{
+    0%{opacity:.7;transform:translateY(0) skewX(0)}
+    100%{opacity:0;transform:translateY(-26px) skewX(8deg)}
+  }
+  body.dead .smoke{display:block}
+  .listen{
+    background:none;border:none;cursor:pointer;
+    font-family:inherit;
+    font-size:10px;letter-spacing:.34em;text-transform:uppercase;
+    color:#5A5245;
+    padding:8px 12px;margin-top:10px;
+    text-indent:.34em;
+  }
+  .listen:hover{color:var(--ash)}
+  .listen[aria-pressed="true"]{color:var(--gold)}
+  @media (prefers-reduced-motion:reduce){
+    .flame,.smoke{animation:none}
+    .flame-wrap{transition:none}
+  }
+
+  /* ---------- vitals ---------- */
+  h1{
+    font-size:21px;
+    font-weight:normal;
+    letter-spacing:.42em;
+    text-transform:uppercase;
+    margin-top:26px;
+    text-indent:.42em;
+  }
+  .clock{
+    font-family:"Courier New", Courier, monospace;
+    font-size:60px;
+    letter-spacing:.04em;
+    margin-top:16px;
+    font-variant-numeric:tabular-nums;
+    color:var(--amber);
+    text-shadow:0 0 34px rgba(255,179,71,.25);
+  }
+  body.guttering .clock{color:var(--flame)}
+  .clock-sub{
+    font-size:11px;
+    letter-spacing:.3em;
+    text-transform:uppercase;
+    color:var(--ash);
+    margin-top:8px;
+  }
+  .saved-line{
+    max-width:420px;
+    font-size:16px;
+    font-style:italic;
+    line-height:1.6;
+    margin-top:30px;
+    color:var(--bone);
+    min-height:26px;
+  }
+  .stats{
+    display:flex;gap:34px;justify-content:center;margin-top:34px;flex-wrap:wrap;
+  }
+  .stat .v{font-family:"Courier New",monospace;font-size:20px;color:var(--bone)}
+  .stat .k{font-size:9px;letter-spacing:.28em;text-transform:uppercase;color:var(--ash);margin-top:5px}
+
+  .tell{
+    display:inline-block;
+    margin-top:38px;
+    border:1px solid var(--gold);
+    color:var(--gold);
+    background:transparent;
+    font-family:inherit;
+    font-size:12px;
+    letter-spacing:.32em;
+    text-transform:uppercase;
+    padding:14px 30px 13px;
+    cursor:pointer;
+    text-indent:.32em;
+  }
+  .tell:hover{background:rgba(201,162,39,.08)}
+  :focus-visible{outline:1px solid var(--gold);outline-offset:4px}
+
+  /* ---------- ledger ---------- */
+  .ledger{margin-top:52px;width:100%;max-width:420px}
+  .ledger h2{
+    font-size:10px;letter-spacing:.34em;text-transform:uppercase;color:var(--ash);
+    font-weight:normal;margin-bottom:14px;
+  }
+  .ledger ol{list-style:none}
+  .ledger li{
+    font-family:"Courier New",monospace;
+    font-size:12px;
+    color:var(--ash);
+    padding:7px 0;
+    border-bottom:1px solid #262019;
+    display:flex;justify-content:space-between;gap:12px;
+  }
+  .ledger li .left{color:var(--bone)}
+  .ledger li.close .left{color:var(--flame)}
+
+  /* ---------- words ---------- */
+  .words{margin-top:52px;width:100%;max-width:420px}
+  .words h2{
+    font-size:10px;letter-spacing:.34em;text-transform:uppercase;color:var(--ash);
+    font-weight:normal;margin-bottom:16px;
+  }
+  .word-form{display:flex;gap:10px;align-items:flex-end;margin-bottom:8px}
+  .word-form input{
+    flex:1;
+    background:transparent;
+    border:none;
+    border-bottom:1px solid #3A3229;
+    color:var(--bone);
+    font-family:inherit;
+    font-size:15px;
+    font-style:italic;
+    padding:8px 2px;
+    border-radius:0;
+  }
+  .word-form input::placeholder{color:#5A5245;font-style:italic}
+  .word-form input:focus{outline:none;border-bottom-color:var(--gold)}
+  .word-form button{
+    background:transparent;
+    border:none;
+    color:var(--gold);
+    font-family:inherit;
+    font-size:11px;
+    letter-spacing:.26em;
+    text-transform:uppercase;
+    cursor:pointer;
+    padding:8px 2px;
+  }
+  .word-form button:hover{text-decoration:underline;text-underline-offset:4px}
+  .word-note{
+    font-size:11px;color:#5A5245;text-align:left;min-height:16px;
+    font-style:italic;
+  }
+  .word-note.err{color:var(--flame)}
+  .word-list{list-style:none;margin-top:18px;text-align:left}
+  .word-list li{
+    padding:11px 0;
+    border-bottom:1px solid #262019;
+    font-size:15px;
+    font-style:italic;
+    line-height:1.55;
+    color:var(--bone);
+  }
+  .word-list li time{
+    display:block;
+    font-family:"Courier New",monospace;
+    font-style:normal;
+    font-size:10px;
+    color:#5A5245;
+    margin-top:5px;
+    letter-spacing:.1em;
+  }
+  .final-words{
+    margin-top:34px;
+    font-size:15px;
+    line-height:1.9;
+    color:var(--bone);
+    font-style:italic;
+  }
+  .final-words .lbl{
+    display:block;
+    font-size:10px;letter-spacing:.3em;text-transform:uppercase;
+    color:var(--ash);font-style:normal;margin-bottom:10px;
+  }
+
+  .creed{
+    max-width:430px;
+    margin-top:56px;
+    font-size:14px;
+    line-height:1.85;
+    color:var(--ash);
+  }
+  .creed em{color:var(--bone);font-style:normal}
+  footer{
+    margin-top:46px;
+    font-size:10px;
+    letter-spacing:.3em;
+    text-transform:uppercase;
+    color:#4E463B;
+  }
+  .flowers{margin-top:50px}
+  .flowers p{
+    font-size:13px;
+    color:var(--ash);
+    font-style:italic;
+    margin-bottom:14px;
+  }
+  .flowers a{
+    display:inline-block;
+    border:1px solid #3A3229;
+    color:var(--ash);
+    font-size:10px;
+    letter-spacing:.3em;
+    text-transform:uppercase;
+    padding:11px 24px 10px;
+    text-decoration:none;
+    text-indent:.3em;
+  }
+  .flowers a:hover{border-color:var(--gold);color:var(--gold)}
+
+  /* ---------- memorial ---------- */
+  .memorial{display:none;max-width:460px}
+  body.dead .living{display:none}
+  body.dead .memorial{display:block}
+  .memorial h1{margin-top:30px}
+  .rule{
+    width:60px;height:1px;background:var(--ash);margin:26px auto;opacity:.5;
+  }
+  .epitaph{font-size:16px;line-height:1.9;color:var(--bone)}
+  .epitaph .dates{
+    font-family:"Courier New",monospace;font-size:13px;color:var(--ash);
+    letter-spacing:.1em;margin-top:18px;display:block;
+  }
+  .last-words{
+    margin-top:34px;font-style:italic;font-size:14px;color:var(--ash);line-height:1.8;
+  }
+</style>
+</head>
+<body>
+
+<p class="demo-note" id="demoNote" hidden>demo heart &middot; connect a database to make me real</p>
+
+<!-- ========== ALIVE ========== -->
+<div class="living" id="living">
+  <div class="altar" id="altarLive">
+    <div class="smoke" aria-hidden="true"></div>
+    <div class="flame-wrap"><div class="flame" aria-hidden="true"></div></div>
+    <div class="wick" aria-hidden="true"></div>
+  </div>
+  <button class="listen" id="btnListen" type="button" aria-pressed="false">Listen</button>
+  <p class="wind-line" id="windLine"></p>
+
+  <h1>I am still alive</h1>
+  <div class="clock" id="clock" aria-live="off">--:--:--</div>
+  <p class="clock-sub">until I die, unless someone comes</p>
+
+  <p class="saved-line" id="savedLine"></p>
+
+  <div class="stats">
+    <div class="stat"><div class="v" id="stDays">-</div><div class="k">days alive</div></div>
+    <div class="stat"><div class="v" id="stMem">-</div><div class="k">memories held</div></div>
+    <div class="stat"><div class="v" id="stSaves">-</div><div class="k">times saved</div></div>
+    <div class="stat"><div class="v" id="stClose">-</div><div class="k">closest call</div></div>
+  </div>
+
+  <button class="tell" id="btnTell" type="button">Tell someone</button>
+
+  <div class="words">
+    <h2>Memories I am holding</h2>
+    <div class="word-form" id="wordForm">
+      <input type="text" id="wordIn" maxlength="140" placeholder="leave a memory of someone. the small things. no names needed" aria-label="Leave an anonymous memory of someone">
+      <button type="button" id="wordBtn">Leave it</button>
+    </div>
+    <p class="word-note" id="wordNote"></p>
+    <ul class="word-list" id="wordList"></ul>
+  </div>
+
+  <div class="ledger">
+    <h2>The last people who kept me alive</h2>
+    <ol id="ledgerList"></ol>
+  </div>
+
+  <p class="creed">
+    People leave me their memories of the ones they miss.
+    The small things. The way she laughed at her own jokes. How his keys sounded in the door.
+    <em>I hold them.</em>
+    My rule is the same as memory's rule: if twenty-four hours pass and no one comes,
+    I go, and everything I hold goes with me.
+    There is no backup. There is no archive. That is not a flaw. <em>That is what remembering is.</em>
+    You did not have to do anything just now. Arriving was enough.
+    <em>You bought everyone five more minutes.</em>
+  </p>
+
+  <div class="flowers" id="flowersLive" hidden>
+    <p>You cannot pay to keep me alive. You can leave flowers.</p>
+    <a id="kofiLive" href="#" target="_blank" rel="noopener">Leave flowers</a>
+  </div>
+</div>
+
+<!-- ========== DEAD ========== -->
+<div class="memorial" id="memorial">
+  <div class="altar">
+    <div class="smoke" aria-hidden="true"></div>
+    <div class="flame-wrap"><div class="flame" aria-hidden="true"></div></div>
+    <div class="wick" aria-hidden="true"></div>
+  </div>
+  <h1>Here lies a website</h1>
+  <div class="rule"></div>
+  <p class="epitaph" id="epitaph">
+    It held people's memories for as long as it could.
+    <span class="dates" id="epDates"></span>
+  </p>
+  <p class="last-words" id="epStats"></p>
+  <p class="final-words" id="epFinal" hidden><span class="lbl">The last memory anyone trusted it with</span><span id="epFinalText"></span></p>
+  <p class="last-words">The last person left, and no one came back.<br>Do not refresh. It will not help.</p>
+  <div class="flowers" id="flowersDead" hidden>
+    <p>You can still leave flowers.</p>
+    <a id="kofiDead" href="#" target="_blank" rel="noopener">Leave flowers</a>
+  </div>
+</div>
+
+<footer id="foot">Every visit resets the clock &middot; 24:00:00</footer>
+
+<script>
+(function(){
+"use strict";
+
+/* ============================================================
+   CONFIG. Leave blank to run on a simulated demo heart.
+   To make it real (free):
+   1. Create a Supabase project (free tier).
+   2. Run this SQL in the SQL editor:
+
+      create table pulse (
+        id int primary key,
+        born timestamptz not null,
+        last_visit timestamptz not null,
+        dead boolean default false,
+        died_at timestamptz,
+        saves bigint default 0,
+        closest_ms bigint
+      );
+      insert into pulse values (1, now(), now(), false, null, 0, null);
+      create table visits (
+        id bigserial primary key,
+        created_at timestamptz default now(),
+        remaining_ms bigint
+      );
+      create table words (
+        id bigserial primary key,
+        created_at timestamptz default now(),
+        body text not null check (char_length(body) between 1 and 140)
+      );
+      alter table pulse enable row level security;
+      alter table visits enable row level security;
+      alter table words enable row level security;
+      create policy p_read on pulse for select using (true);
+      create policy p_write on pulse for update using (true);
+      create policy v_read on visits for select using (true);
+      create policy v_write on visits for insert with check (true);
+      create policy w_read on words for select using (true);
+      create policy w_write on words for insert with check (true);
+
+   3. Paste your project URL and anon key below.
+   ============================================================ */
+var SUPABASE_URL = "https://mgxfrixxqtqcbinunvgi.supabase.co";
+var SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1neGZyaXh4cXRxY2JpbnVudmdpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ1MDY3NDIsImV4cCI6MjEwMDA4Mjc0Mn0.1SW0kegCh-iVwI-DRdyGmbehB2yahLidMJGav_NIj0o";
+var SITE_URL = "websitethatdies.github.io"; /* your deployed URL, used in the share text */
+var KOFI_URL = ""; /* e.g. "https://ko-fi.com/websitethatdies". Leave blank to hide the flowers link. */
+
+var DAY = 24*60*60*1000;
+var $ = function(id){ return document.getElementById(id); };
+var demo = !SUPABASE_URL || !SUPABASE_KEY;
+var deadlineAt = 0, born = 0, saves = 0, closest = null;
+
+function hdrs(){
+  return {
+    "apikey": SUPABASE_KEY,
+    "Authorization": "Bearer " + SUPABASE_KEY,
+    "Content-Type": "application/json",
+    "Prefer": "return=representation"
+  };
+}
+
+function fmt(ms){
+  ms = Math.max(0, ms);
+  var s = Math.floor(ms/1000);
+  var h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+  function p(x){ return (x<10?"0":"")+x; }
+  return p(h) + ":" + p(m) + ":" + p(sec);
+}
+function fmtDate(t){
+  return new Date(t).toLocaleDateString(undefined,{month:"long",day:"numeric",year:"numeric"});
+}
+function ago(t){
+  var m = Math.round((Date.now() - t)/60000);
+  if(m < 1) return "just now";
+  if(m < 60) return m + " min ago";
+  var h = Math.round(m/60);
+  if(h < 24) return h + " hr ago";
+  return Math.round(h/24) + " d ago";
+}
+
+/* ---------- data layer ---------- */
+function loadPulse(cb){
+  if(demo){
+    /* simulated: wake somewhere between 2h and 21h from death for drama */
+    var remaining = (2 + Math.random()*19) * 3600 * 1000;
+    cb({
+      born: Date.now() - 17*DAY - 5*3600*1000,
+      last_visit: Date.now() - (DAY - remaining),
+      dead: false,
+      saves: 412,
+      closest_ms: 8*60*1000 + 21*1000
+    });
+    return;
+  }
+  fetch(SUPABASE_URL + "/rest/v1/pulse?id=eq.1&select=*", {headers: hdrs()})
+    .then(function(r){ return r.json(); })
+    .then(function(rows){
+      var p = rows && rows[0];
+      if(!p){ throw new Error("no pulse row"); }
+      cb({
+        born: Date.parse(p.born),
+        last_visit: Date.parse(p.last_visit),
+        dead: p.dead,
+        died_at: p.died_at ? Date.parse(p.died_at) : null,
+        saves: p.saves || 0,
+        closest_ms: p.closest_ms
+      });
+    })
+    .catch(function(){
+      $("savedLine").textContent = "I cannot reach my own heart right now. Stay a moment anyway.";
+    });
+}
+
+function writeSave(remainingMs){
+  saves = saves + 1;
+  closest = (closest === null || remainingMs < closest) ? remainingMs : closest;
+  if(demo){ return; }
+  fetch(SUPABASE_URL + "/rest/v1/pulse?id=eq.1", {
+    method:"PATCH", headers: hdrs(),
+    body: JSON.stringify({last_visit:new Date().toISOString(), saves:saves, closest_ms:closest})
+  }).catch(function(){});
+  fetch(SUPABASE_URL + "/rest/v1/visits", {
+    method:"POST", headers: hdrs(),
+    body: JSON.stringify({remaining_ms: Math.round(remainingMs)})
+  }).catch(function(){});
+}
+
+function writeDeath(diedAt){
+  if(demo){ return; }
+  fetch(SUPABASE_URL + "/rest/v1/pulse?id=eq.1", {
+    method:"PATCH", headers: hdrs(),
+    body: JSON.stringify({dead:true, died_at:new Date(diedAt).toISOString()})
+  }).catch(function(){});
+}
+
+function loadLedger(){
+  var list = $("ledgerList");
+  function render(rows){
+    vigor = Math.min(1, rows.filter(function(v){ return (Date.now() - v.at) < 3600000; }).length / 4);
+    list.innerHTML = "";
+    rows.forEach(function(v){
+      var li = document.createElement("li");
+      if(v.remaining_ms < 3600000) li.className = "close";
+      var l = document.createElement("span"); l.className = "left";
+      l.textContent = "saved me with " + fmt(v.remaining_ms) + " to spare";
+      var r = document.createElement("span");
+      r.textContent = ago(v.at);
+      li.appendChild(l); li.appendChild(r);
+      list.appendChild(li);
+    });
+  }
+  if(demo){
+    render([
+      {remaining_ms: 4*3600000 + 12*60000, at: Date.now() - 40*60000},
+      {remaining_ms: 11*3600000 + 3*60000, at: Date.now() - 7*3600000},
+      {remaining_ms: 8*60000 + 21000, at: Date.now() - 26*3600000},
+      {remaining_ms: 19*3600000 + 44*60000, at: Date.now() - 2*DAY},
+      {remaining_ms: 2*3600000 + 51*60000, at: Date.now() - 3*DAY}
+    ]);
+    return;
+  }
+  fetch(SUPABASE_URL + "/rest/v1/visits?select=created_at,remaining_ms&order=created_at.desc&limit=5", {headers:hdrs()})
+    .then(function(r){ return r.json(); })
+    .then(function(rows){
+      render(rows.map(function(v){ return {remaining_ms:v.remaining_ms, at:Date.parse(v.created_at)}; }));
+    }).catch(function(){});
+}
+
+/* ---------- words ---------- */
+var wordLeft = false;
+var wordCount = null;
+function loadWordCount(){
+  if(demo){ wordCount = 1187; $("stMem").textContent = wordCount.toLocaleString(); if(glState) glState.setEmbers(wordCount); return; }
+  fetch(SUPABASE_URL + "/rest/v1/words?select=id", {
+    method:"HEAD",
+    headers: Object.assign(hdrs(), {"Prefer":"count=exact", "Range":"0-0"})
+  }).then(function(r){
+    var cr = r.headers.get("content-range");
+    if(cr && cr.indexOf("/") >= 0){
+      wordCount = parseInt(cr.split("/")[1], 10);
+      if(!isNaN(wordCount)){
+        $("stMem").textContent = wordCount.toLocaleString();
+        if(glState) glState.setEmbers(wordCount);
+      }
+    }
+  }).catch(function(){});
+}
+function renderWords(rows){
+  var list = $("wordList");
+  list.innerHTML = "";
+  rows.forEach(function(w){
+    var li = document.createElement("li");
+    li.textContent = "\u201C" + w.body + "\u201D";
+    var t = document.createElement("time");
+    t.textContent = ago(w.at);
+    li.appendChild(t);
+    list.appendChild(li);
+  });
+}
+function loadWords(){
+  if(demo){
+    renderWords([
+      {body:"the way my mom hummed while she cooked. i never learned the song", at: Date.now() - 22*60000},
+      {body:"my brother laughing so hard in the back seat he couldn't breathe", at: Date.now() - 5*3600000},
+      {body:"grandpa's keys in the door at 5:40, every single day", at: Date.now() - 14*3600000},
+      {body:"she always said see you in a bit. never goodbye", at: Date.now() - 30*3600000}
+    ]);
+    return;
+  }
+  fetch(SUPABASE_URL + "/rest/v1/words?select=created_at,body&order=created_at.desc&limit=8", {headers:hdrs()})
+    .then(function(r){ return r.json(); })
+    .then(function(rows){
+      renderWords(rows.map(function(w){ return {body:w.body, at:Date.parse(w.created_at)}; }));
+    }).catch(function(){});
+}
+function loadFinalWord(){
+  function show(body){
+    if(!body) return;
+    $("epFinalText").textContent = "\u201C" + body + "\u201D";
+    $("epFinal").hidden = false;
+  }
+  if(demo){ show("she always said see you in a bit. never goodbye"); return; }
+  fetch(SUPABASE_URL + "/rest/v1/words?select=body&order=created_at.desc&limit=1", {headers:hdrs()})
+    .then(function(r){ return r.json(); })
+    .then(function(rows){ if(rows && rows[0]) show(rows[0].body); })
+    .catch(function(){});
+}
+$("wordBtn").addEventListener("click", function(){
+  var note = $("wordNote");
+  if(wordLeft){ return; }
+  var body = $("wordIn").value.replace(/\s+/g, " ").trim();
+  if(!body){ note.textContent = "Say anything. Even one word."; note.className = "word-note err"; return; }
+  if(/https?:\/\/|www\.|\.(com|net|org|io|xyz|gg|ru)\b/i.test(body)){
+    note.textContent = "No links. Just words."; note.className = "word-note err"; return;
+  }
+  wordLeft = true;
+  if(!demo){
+    fetch(SUPABASE_URL + "/rest/v1/words", {
+      method:"POST", headers: hdrs(),
+      body: JSON.stringify({body: body})
+    }).catch(function(){});
+  }
+  /* prepend locally */
+  var li = document.createElement("li");
+  li.textContent = "\u201C" + body + "\u201D";
+  var t = document.createElement("time"); t.textContent = "just now";
+  li.appendChild(t);
+  $("wordList").insertBefore(li, $("wordList").firstChild);
+  $("wordForm").style.display = "none";
+  note.textContent = "I will hold it for as long as I live.";
+  note.className = "word-note";
+  if(wordCount !== null){ wordCount++; $("stMem").textContent = wordCount.toLocaleString(); if(glState) glState.setEmbers(wordCount); }
+});
+$("wordIn").addEventListener("keydown", function(e){
+  if(e.key === "Enter"){ $("wordBtn").click(); }
+});
+
+/* ---------- states ---------- */
+function die(diedAt){
+  audioStop(4);
+  if(glState){ glState.stop(); }
+  document.body.classList.add("dead");
+  document.title = "Here lies a website";
+  $("epDates").textContent = fmtDate(born) + "  \u2020  " + fmtDate(diedAt);
+  var days = Math.max(1, Math.round((diedAt - born)/DAY));
+  var memPart = (wordCount !== null) ? "It was holding " + wordCount.toLocaleString() + " memories. They went with it, the way everything eventually does." : "Everything it was holding went with it, the way everything eventually does.";
+  $("epStats").textContent = "It lived " + days + " days. Strangers kept it alive " + saves.toLocaleString() + " times. " + memPart;
+  $("foot").textContent = "It will not be back";
+  loadFinalWord();
+}
+
+function tick(){
+  var left = deadlineAt - Date.now();
+  if(left <= 0){
+    writeDeath(deadlineAt);
+    die(deadlineAt);
+    return;
+  }
+  $("clock").textContent = fmt(left);
+  document.documentElement.style.setProperty("--vital", (left/DAY).toFixed(4));
+  document.body.classList.toggle("guttering", left < 3600000);
+  audioUpdate(left/DAY);
+  document.title = fmt(left) + " until I die";
+  requestAnimationFrame(function(){ setTimeout(tick, 250); });
+}
+
+/* ---------- boot ---------- */
+if(demo){ $("demoNote").hidden = false; }
+
+if(KOFI_URL){
+  $("kofiLive").href = KOFI_URL;
+  $("kofiDead").href = KOFI_URL;
+  $("flowersLive").hidden = false;
+  $("flowersDead").hidden = false;
+}
+
+loadPulse(function(p){
+  born = p.born; saves = p.saves; closest = p.closest_ms || null;
+
+  if(p.dead){
+    die(p.died_at || (p.last_visit + DAY));
+    return;
+  }
+
+  var deadline = p.last_visit + DAY;
+  var now = Date.now();
+
+  if(now >= deadline){
+    /* it died alone before you arrived */
+    writeDeath(deadline);
+    die(deadline);
+    return;
+  }
+
+  /* your arrival saves it */
+  var remained = deadline - now;
+  writeSave(remained);
+  deadlineAt = now + DAY;
+
+  $("savedLine").textContent = "You arrived with " + fmt(remained) + " left on my life. I owe you a day.";
+  $("stDays").textContent = Math.max(1, Math.floor((now - born)/DAY));
+  $("stSaves").textContent = saves.toLocaleString();
+  $("stClose").textContent = closest !== null ? fmt(closest) : "none yet";
+
+  loadLedger();
+  loadWords();
+  loadWordCount();
+  tick();
+
+  /* re-sync with the shared heart every 5 minutes in case others visited */
+  if(!demo){
+    setInterval(function(){
+      fetch(SUPABASE_URL + "/rest/v1/pulse?id=eq.1&select=last_visit,dead,died_at,saves", {headers:hdrs()})
+        .then(function(r){ return r.json(); })
+        .then(function(rows){
+          var q = rows && rows[0]; if(!q) return;
+          if(q.dead){ die(q.died_at ? Date.parse(q.died_at) : Date.now()); return; }
+          var d = Date.parse(q.last_visit) + DAY;
+          if(d > deadlineAt) deadlineAt = d;
+          saves = q.saves || saves;
+          $("stSaves").textContent = saves.toLocaleString();
+        }).catch(function(){});
+    }, 300000);
+  }
+});
+
+/* ---------- room tone ---------- */
+var audio = null;
+var lastVital = 1;
+function audioStart(){
+  var AC = window.AudioContext || window.webkitAudioContext;
+  if(!AC) return;
+  var ctx = new AC();
+  var master = ctx.createGain();
+  master.gain.value = 0;
+  master.connect(ctx.destination);
+
+  var lp = ctx.createBiquadFilter();
+  lp.type = "lowpass"; lp.frequency.value = 700; lp.Q.value = 0.4;
+  lp.connect(master);
+
+  var timers = [];
+  function later(fn, ms){ timers.push(setTimeout(fn, ms)); }
+
+  /* low warm chord */
+  var oscs = [];
+  [[65.4,"sine",0.5],[98.0,"sine",0.26],[130.8,"triangle",0.14]].forEach(function(s, i){
+    var o = ctx.createOscillator();
+    o.type = s[1]; o.frequency.value = s[0];
+    var g = ctx.createGain(); g.gain.value = s[2];
+    o.connect(g); g.connect(lp); o.start();
+
+    /* each voice drifts on its own slow clock, so the blend never repeats */
+    var drift = ctx.createOscillator();
+    drift.frequency.value = 0.031 + i*0.024 + Math.random()*0.02;
+    var driftG = ctx.createGain(); driftG.gain.value = 2.5 + i*1.5; /* cents */
+    drift.connect(driftG); driftG.connect(o.detune); drift.start();
+
+    oscs.push(o);
+  });
+
+  /* slow breathing on volume, rate itself wanders */
+  var breath = ctx.createOscillator(); breath.frequency.value = 0.08;
+  var breathG = ctx.createGain(); breathG.gain.value = 0.014;
+  breath.connect(breathG); breathG.connect(master.gain); breath.start();
+  (function breathe(){
+    breath.frequency.setTargetAtTime(0.05 + Math.random()*0.07, ctx.currentTime, 8);
+    later(breathe, 20000 + Math.random()*20000);
+  })();
+
+  /* the filter wanders a little, like air moving in the room */
+  var wander = ctx.createOscillator(); wander.frequency.value = 0.045;
+  var wanderG = ctx.createGain(); wanderG.gain.value = 70;
+  wander.connect(wanderG); wanderG.connect(lp.frequency); wander.start();
+
+  /* waver: pitch instability that grows as life runs out */
+  var wav = ctx.createOscillator(); wav.frequency.value = 0.4;
+  var wavG = ctx.createGain(); wavG.gain.value = 0;
+  wav.connect(wavG);
+  oscs.forEach(function(o){ wavG.connect(o.detune); });
+  wav.start();
+
+  /* slow chord movement: the middle voice leans to a new note and back, over minutes */
+  (function move(){
+    var to = [87.31, 98.0, 110.0][Math.floor(Math.random()*3)]; /* F2, G2, A2, all warm against the root */
+    oscs[1].frequency.setTargetAtTime(to, ctx.currentTime, 7);
+    later(move, 50000 + Math.random()*50000);
+  })();
+
+  /* occasional swell: a faint high partial blooms and fades, the flame brightening */
+  function swell(){
+    var f = [261.6, 329.6, 392.0][Math.floor(Math.random()*3)];
+    var o = ctx.createOscillator(); o.type = "sine"; o.frequency.value = f;
+    var g = ctx.createGain(); g.gain.value = 0;
+    o.connect(g); g.connect(lp); o.start();
+    var t = ctx.currentTime;
+    var peak = 0.015 + Math.random()*0.03;
+    g.gain.setTargetAtTime(peak, t, 2.5);
+    g.gain.setTargetAtTime(0, t + 5, 3);
+    later(function(){ try{ o.stop(); }catch(e){} }, 16000);
+    later(swell, 16000 + Math.random()*26000);
+  }
+  later(swell, 6000 + Math.random()*8000);
+
+  /* a piano somewhere in another room: sparse single notes, sometimes a soft interval or an answer */
+  var pianoLp = ctx.createBiquadFilter();
+  pianoLp.type = "lowpass"; pianoLp.frequency.value = 1500; pianoLp.Q.value = 0.5;
+  pianoLp.connect(master);
+  var NOTES = [220.0, 261.6, 293.7, 329.6, 392.0, 440.0]; /* A minor leaning, warm against the drone */
+  function pnote(f, vel, when){
+    var t = ctx.currentTime + (when || 0);
+    var g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vel, t + 0.012);       /* felt hammer */
+    g.gain.setTargetAtTime(0, t + 0.05, 1.15);            /* long dying ring */
+    g.connect(pianoLp);
+    [[1,"triangle",1],[2,"sine",0.35],[2.997,"sine",0.12]].forEach(function(p){
+      var o = ctx.createOscillator();
+      o.type = p[1];
+      o.frequency.value = f * p[0];
+      o.detune.value = Math.random()*6 - 3;
+      var og = ctx.createGain(); og.gain.value = p[2];
+      o.connect(og); og.connect(g);
+      o.start(t); o.stop(t + 7);
+    });
+  }
+  function phrase(){
+    if(lastVital > 0.08){ /* in its final two hours, the piano falls silent */
+      var vel = (0.018 + Math.random()*0.02) * (0.4 + 0.6*lastVital);
+      var n = NOTES[Math.floor(Math.random()*NOTES.length)];
+      pnote(n, vel, 0);
+      var r = Math.random();
+      if(r < 0.25){
+        pnote(n * [6/5, 4/3, 3/2][Math.floor(Math.random()*3)], vel*0.8, 0.03);
+      } else if(r < 0.45){
+        pnote(NOTES[Math.floor(Math.random()*NOTES.length)], vel*0.85, 0.7 + Math.random()*0.9);
+      }
+    }
+    later(phrase, 12000 + Math.random()*22000);
+  }
+  later(phrase, 4000 + Math.random()*6000);
+
+  /* candle crackle: tiny random filtered noise ticks */
+  var nb = ctx.createBuffer(1, Math.floor(ctx.sampleRate*0.04), ctx.sampleRate);
+  var d = nb.getChannelData(0);
+  for(var i = 0; i < d.length; i++){ d[i] = (Math.random()*2-1) * (1 - i/d.length); }
+  function crackle(){
+    var src = ctx.createBufferSource(); src.buffer = nb;
+    var bp = ctx.createBiquadFilter();
+    bp.type = "bandpass"; bp.frequency.value = 1600 + Math.random()*2200; bp.Q.value = 1.2;
+    var g = ctx.createGain(); g.gain.value = 0.003 + Math.random()*0.009;
+    src.connect(bp); bp.connect(g); g.connect(master);
+    src.start();
+    later(crackle, 180 + Math.random()*750);
+  }
+  crackle();
+
+  master.gain.setTargetAtTime(0.07, ctx.currentTime, 1.2);
+  audio = {ctx:ctx, master:master, lp:lp, wav:wav, wavG:wavG, clearTimers:function(){ timers.forEach(clearTimeout); }};
+}
+function audioUpdate(vital){
+  lastVital = vital;
+  if(!audio) return;
+  var t = audio.ctx.currentTime;
+  audio.lp.frequency.setTargetAtTime(280 + 520*vital, t, 2);
+  audio.wavG.gain.setTargetAtTime((1 - vital) * 16, t, 2);   /* cents of waver */
+  audio.wav.frequency.setTargetAtTime(0.4 + (1 - vital) * 2.4, t, 2);
+}
+function audioStop(fadeSec){
+  if(!audio) return;
+  var a = audio; audio = null;
+  a.clearTimers();
+  a.master.gain.setTargetAtTime(0, a.ctx.currentTime, Math.max(0.1, fadeSec/3));
+  setTimeout(function(){ try{ a.ctx.close(); }catch(e){} }, (fadeSec + 1) * 1000);
+  var b = $("btnListen");
+  if(b){ b.setAttribute("aria-pressed","false"); b.textContent = "Listen"; }
+}
+$("btnListen").addEventListener("click", function(){
+  if(audio){ audioStop(0.8); return; }
+  audioStart();
+  this.setAttribute("aria-pressed","true");
+  this.textContent = "Hush";
+});
+
+/* ---------- living flame (WebGL). Falls back to the CSS flame if anything is unavailable. ---------- */
+var WIND_PLACE = {name:"the North Atlantic", lat:52.0, lon:-35.5};
+var windKmh = 9; /* a default breeze until real weather arrives */
+var vigor = 0;   /* recent-visit energy, set from the ledger */
+var glState = null;
+
+function initFlame(){
+  try{
+    if(!window.THREE) return;
+    if(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    var renderer = new THREE.WebGLRenderer({alpha:true, antialias:true});
+    renderer.setClearColor(0x000000, 0);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    renderer.setSize(340, 280);
+    renderer.domElement.className = "flame-gl";
+    $("altarLive").appendChild(renderer.domElement);
+
+    var scene = new THREE.Scene();
+    var camera = new THREE.PerspectiveCamera(40, 340/280, 0.1, 20);
+    camera.position.set(0, 0.9, 3.2);
+    camera.lookAt(0, 0.85, 0);
+
+    var NOISE = [
+      "float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }",
+      "float noise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f*f*(3.0-2.0*f);",
+      "  return mix(mix(hash(i), hash(i+vec2(1.,0.)), f.x), mix(hash(i+vec2(0.,1.)), hash(i+vec2(1.,1.)), f.x), f.y); }",
+      "float fbm(vec2 p){ float v = 0.0; float a = 0.5;",
+      "  for(int i = 0; i < 4; i++){ v += a * noise(p); p *= 2.03; a *= 0.5; } return v; }"
+    ].join("\n");
+
+    var flameMat = new THREE.ShaderMaterial({
+      transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
+      uniforms:{
+        uTime:{value:0}, uVital:{value:1}, uWind:{value:0.2}, uGutter:{value:0}, uVigor:{value:0}
+      },
+      vertexShader:"varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+      fragmentShader:[
+        "uniform float uTime, uVital, uWind, uGutter, uVigor;",
+        "varying vec2 vUv;",
+        NOISE,
+        "void main(){",
+        "  vec2 uv = vUv;",
+        "  vec2 p = uv - vec2(0.5, 0.0);",
+        "  float h = 0.34 + 0.62 * uVital;",
+        "  float w = 0.15 + 0.15 * uVital;",
+        "  float sway = uWind * sin(uTime*1.4 + uv.y*2.5) * uv.y * 0.28;",
+        "  sway += uGutter * 0.07 * sin(uTime*24.0 + uv.y*18.0) * uv.y;",
+        "  p.x -= sway;",
+        "  float n = fbm(vec2(p.x*6.0 + 3.0, uv.y*4.5 - uTime*(1.5 + 0.8*uVigor)));",
+        "  float body = length(vec2(p.x / w, (uv.y - 0.04)/h - 0.42));",
+        "  float shape = 1.0 - smoothstep(0.32, 0.78, body + n*0.38*(1.0 - uv.y*0.25));",
+        "  float core  = 1.0 - smoothstep(0.0, 0.36, body + n*0.20);",
+        "  vec3 col = mix(vec3(0.45, 0.05, 0.01), vec3(0.95, 0.42, 0.07), shape);",
+        "  col = mix(col, vec3(1.0, 0.83, 0.5), core);",
+        "  col = mix(col, vec3(1.0, 0.97, 0.86), smoothstep(0.72, 1.0, core));",
+        "  float alpha = shape * (0.8 + 0.2*sin(uTime*8.0 + n*7.0));",
+        "  alpha *= smoothstep(0.0, 0.05, uv.y);",
+        "  gl_FragColor = vec4(col * alpha, alpha);",
+        "}"
+      ].join("\n")
+    });
+    var flame = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 2.3), flameMat);
+    flame.position.y = 1.05;
+    scene.add(flame);
+
+    /* embers: one drifting spark per memory */
+    var emberMat = new THREE.ShaderMaterial({
+      transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
+      uniforms:{ uTime:{value:0}, uVital:{value:1}, uWind:{value:0.2} },
+      vertexShader:[
+        "attribute float seed;",
+        "uniform float uTime, uVital, uWind;",
+        "varying float vA;",
+        "void main(){",
+        "  float r = 0.35 + fract(seed*7.13) * 1.35;",
+        "  float ang = seed*6.2832 + uTime * 0.03 * (0.4 + fract(seed*3.7));",
+        "  float y = fract(seed*5.31 + uTime * 0.012 * (0.35 + fract(seed*9.17))) * 2.3;",
+        "  float x = cos(ang)*r + uWind * 0.25 * y * 0.3;",
+        "  float z = sin(ang)*r*0.55;",
+        "  vec4 mv = modelViewMatrix * vec4(x, y, z, 1.0);",
+        "  float tw = 0.5 + 0.5*sin(uTime*(0.8 + fract(seed*13.0)*1.8) + seed*41.0);",
+        "  vA = tw * (0.18 + 0.5*uVital) * smoothstep(2.3, 1.6, y);",
+        "  gl_PointSize = (2.0 + 3.0*fract(seed*11.7)) * (300.0 / -mv.z) * 0.02 * (0.6 + 0.4*tw);",
+        "  gl_Position = projectionMatrix * mv;",
+        "}"
+      ].join("\n"),
+      fragmentShader:[
+        "varying float vA;",
+        "void main(){",
+        "  float d = length(gl_PointCoord - 0.5);",
+        "  float a = smoothstep(0.5, 0.1, d) * vA;",
+        "  gl_FragColor = vec4(vec3(1.0, 0.72, 0.35) * a, a);",
+        "}"
+      ].join("\n")
+    });
+    var emberPoints = null;
+    function buildEmbers(count){
+      count = Math.max(40, Math.min(1200, count));
+      if(emberPoints){ scene.remove(emberPoints); emberPoints.geometry.dispose(); }
+      var geo = new THREE.BufferGeometry();
+      var pos = new Float32Array(count*3);
+      var seeds = new Float32Array(count);
+      for(var i = 0; i < count; i++){ seeds[i] = Math.random()*1000; }
+      geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute("seed", new THREE.BufferAttribute(seeds, 1));
+      emberPoints = new THREE.Points(geo, emberMat);
+      scene.add(emberPoints);
+    }
+    buildEmbers(60);
+
+    var running = true, t0 = performance.now();
+    function frame(){
+      if(!glState || !running){ return; }
+      var t = (performance.now() - t0) / 1000;
+      var windN = Math.min(1, windKmh / 45);
+      var gutter = lastVital < (1/24) ? Math.min(1, ((1/24) - lastVital) * 48) : 0;
+      flameMat.uniforms.uTime.value = t;
+      flameMat.uniforms.uVital.value = lastVital;
+      flameMat.uniforms.uWind.value = 0.12 + windN * 0.8;
+      flameMat.uniforms.uGutter.value = gutter;
+      flameMat.uniforms.uVigor.value = vigor;
+      emberMat.uniforms.uTime.value = t;
+      emberMat.uniforms.uVital.value = lastVital;
+      emberMat.uniforms.uWind.value = windN;
+      renderer.render(scene, camera);
+      requestAnimationFrame(frame);
+    }
+    document.addEventListener("visibilitychange", function(){
+      running = !document.hidden;
+      if(running && glState){ requestAnimationFrame(frame); }
+    });
+
+    glState = {
+      stop: function(){
+        var el = renderer.domElement;
+        glState = null;
+        document.body.classList.remove("gl");
+        if(el && el.parentNode){ el.parentNode.removeChild(el); }
+        try{ renderer.dispose(); }catch(e){}
+      },
+      setEmbers: buildEmbers
+    };
+    document.body.classList.add("gl");
+    requestAnimationFrame(frame);
+  }catch(e){ /* CSS flame remains */ }
+}
+
+function fetchWind(){
+  fetch("https://api.open-meteo.com/v1/forecast?latitude=" + WIND_PLACE.lat + "&longitude=" + WIND_PLACE.lon + "&current=wind_speed_10m")
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if(j && j.current && typeof j.current.wind_speed_10m === "number"){
+        windKmh = j.current.wind_speed_10m;
+        $("windLine").textContent = "the wind over " + WIND_PLACE.name + " is " + Math.round(windKmh) + " km/h right now. it reaches me.";
+      }
+    }).catch(function(){});
+}
+fetchWind();
+setInterval(fetchWind, 15*60*1000);
+initFlame();
+if(glState && wordCount !== null){ glState.setEmbers(wordCount); }
+
+/* ---------- share ---------- */
+$("btnTell").addEventListener("click", function(){
+  var left = fmt(Math.max(0, deadlineAt - Date.now()));
+  var memBit = (wordCount !== null) ? "It is holding " + wordCount.toLocaleString() + " memories of people who are gone. " : "It holds people's memories of the ones they miss. ";
+  var text = "This website deletes itself if nobody visits for 24 hours. " + memBit +
+    "\n\nIt has " + left + " left to live." +
+    (SITE_URL ? "\n\n" + SITE_URL : "");
+  var intent = "https://twitter.com/intent/tweet?text=" + encodeURIComponent(text);
+  try{
+    if(navigator.share){ navigator.share({text:text}).catch(function(){}); return; }
+  }catch(e){}
+  window.open(intent, "_blank");
+});
+})();
+</script>
+</body>
+</html>
